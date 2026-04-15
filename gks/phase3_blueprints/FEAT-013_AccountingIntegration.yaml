@@ -1,0 +1,329 @@
+# FEAT-013_AccountingIntegration.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-013
+  name: "Accounting Integration — Multi-Provider Sync Engine"
+  module: "MOD-BILLING"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "gks/02_features/FEAT--accounting-integration.md"
+  depends_on: ["FEAT-003_Billing", "FEAT-001_MultiTenant"]
+
+# ──────────────────────────────────────────────
+# OVERVIEW
+# ──────────────────────────────────────────────
+# Synchronizes Zuri invoices, payments, expenses, and contacts
+# with external cloud accounting platforms.
+#
+# Existing code:
+#   - AccountingService.js (orchestrator with adapter pattern)
+#   - FlowAccountAdapter.js (OAuth2, invoice/contact/expense sync)
+#   - ExpressAdapter.js (Excel file generation + email delivery)
+#   - DB: IntegrationConfig, IntegrationDocumentRef, IntegrationSyncLog
+#   - API: /api/integrations/accounting (GET/PUT)
+#
+# Gap: Peak/Sage adapters, two-way sync, reconciliation,
+#   tax code mapping, error recovery UI, sync scheduler
+
+architectural_pattern:
+  pattern: "Adapter-Orchestrator with Idempotent Sync"
+  orchestrator: "src/lib/accounting/AccountingService.js"
+  adapter_interface: |
+    Each adapter MUST implement:
+      - syncInvoice(order, customer) → externalRef
+      - syncContact(customer) → externalRef
+      - syncExpense(purchaseOrder) → externalRef
+      - getStatus() → { connected, lastSync, errors }
+  queue: "QStash (scheduled sync batches)"
+  idempotency: "IntegrationDocumentRef table — prevents duplicate sync"
+  encryption: "OAuth tokens encrypted at rest via crypto.js"
+
+# ──────────────────────────────────────────────
+# PROVIDER MATRIX
+# ──────────────────────────────────────────────
+providers:
+  flowaccount:
+    status: "implemented"
+    auth: "OAuth2 (authorization_code grant)"
+    capabilities: [invoice, contact, expense]
+    api_base: "https://openapi.flowaccount.com/v1"
+    adapter: "src/lib/accounting/FlowAccountAdapter.js"
+    notes: "Auto token renewal on expiry"
+
+  express:
+    status: "implemented"
+    auth: "None (file export via email)"
+    capabilities: [invoice_export, expense_export]
+    method: "Generate X-import Excel → send via Resend API"
+    adapter: "src/lib/accounting/ExpressAdapter.js"
+    notes: "Buddhist Era date format, manual import by accountant"
+
+  peak:
+    status: "planned"
+    auth: "API Key"
+    capabilities: [invoice, contact, receipt, expense]
+    api_base: "https://app.peakaccount.com/api/v1"
+    adapter: "src/lib/accounting/PeakAdapter.js (NEW)"
+    notes: "Popular in Thailand SME segment"
+
+  sage:
+    status: "planned"
+    auth: "OAuth2"
+    capabilities: [invoice, contact, payment, expense]
+    api_base: "https://api.accounting.sage.com/v3.1"
+    adapter: "src/lib/accounting/SageAdapter.js (NEW)"
+    notes: "International — for tenants with global operations"
+
+# ──────────────────────────────────────────────
+# DATA LOGIC
+# ──────────────────────────────────────────────
+data_logic:
+  sync_pipeline:
+    trigger_modes:
+      realtime: "Post-payment hook (Order status → COMPLETED)"
+      scheduled: "QStash cron every 4 hours — batch unsynchronized records"
+      manual: "Admin button: 'Sync Now'"
+    pipeline:
+      - step: "DISCOVER"
+        action: "Query Orders/POs where sync_status IS NULL or FAILED"
+        filter: "tenantId scoped, limit 50 per batch"
+      - step: "TRANSFORM"
+        action: "Map Zuri data → provider-specific format"
+        mapping:
+          invoice:
+            zuri_fields: [orderId, items, subtotal, discount, vat, total, customerName]
+            ref_format: "ZRI-{orderId}"
+          contact:
+            zuri_fields: [customerId, name, phone, email, taxId]
+          expense:
+            zuri_fields: [purchaseOrderId, supplierId, items, total, vat]
+      - step: "SYNC"
+        action: "Call adapter.syncInvoice() / syncContact() / syncExpense()"
+        idempotency: "Check IntegrationDocumentRef before API call"
+      - step: "RECORD"
+        action: "Upsert IntegrationDocumentRef + log to IntegrationSyncLog"
+        on_success: "Set sync_status = SYNCED, store externalRef"
+        on_failure: "Set sync_status = FAILED, log error, increment retryCount"
+
+  error_handling:
+    retry_policy:
+      max_retries: 3
+      backoff: "exponential (30s, 120s, 480s)"
+      dead_letter: "After max retries → flag as MANUAL_REVIEW"
+    common_errors:
+      - error: "TOKEN_EXPIRED"
+        recovery: "Auto-refresh OAuth token, retry once"
+      - error: "DUPLICATE_REF"
+        recovery: "Skip sync, mark as ALREADY_SYNCED"
+      - error: "RATE_LIMITED"
+        recovery: "Requeue with delay"
+      - error: "VALIDATION_ERROR"
+        recovery: "Log details, flag for manual review"
+
+  tax_code_mapping:
+    structure:
+      tenantId: "string"
+      zuriCategory: "string (product category or expense type)"
+      providerTaxCode: "string (provider-specific tax code)"
+      vatRate: "number (0, 7, or exempt)"
+    default_mapping:
+      food_and_beverage: { vat: 7, code: "VAT7" }
+      service: { vat: 7, code: "VAT7" }
+      exempt: { vat: 0, code: "EXEMPT" }
+    customizable: "Admin can override per product category"
+
+  reconciliation:
+    purpose: "Verify Zuri records match accounting system"
+    schedule: "Weekly (QStash cron — Sunday 02:00 ICT)"
+    logic:
+      - "Fetch synced invoices from provider API (last 7 days)"
+      - "Compare total amounts: Zuri vs provider"
+      - "Flag mismatches > ฿1 as RECONCILIATION_MISMATCH"
+      - "Generate discrepancy report"
+    notification: "Email to tenant admin + in-app alert"
+
+# ──────────────────────────────────────────────
+# API CONTRACTS
+# ──────────────────────────────────────────────
+api_contracts:
+  # --- Existing (enhanced) ---
+  - endpoint: "GET /api/integrations/accounting"
+    description: "Get current accounting integration config (tokens masked)"
+    returns: "{ provider, connected, lastSync, syncStats }"
+    auth: "MGR/ADM"
+
+  - endpoint: "PUT /api/integrations/accounting"
+    description: "Update integration config (provider, credentials)"
+    payload: { provider: "string", config: "object" }
+    auth: "ADM"
+
+  - endpoint: "POST /api/integrations/accounting/export"
+    description: "Manual export (Express adapter) or force sync (FlowAccount)"
+    payload: { dateFrom: "date", dateTo: "date", type: "invoice|expense" }
+    auth: "MGR/ADM"
+
+  # --- New ---
+  - endpoint: "GET /api/integrations/accounting/sync-status"
+    description: "Dashboard view — sync health, recent errors, queue depth"
+    returns: "{ totalSynced, totalFailed, pendingQueue, recentErrors[] }"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/integrations/accounting/retry"
+    description: "Retry failed sync items"
+    payload: { documentRefIds: "uuid[]" }
+    auth: "ADM"
+
+  - endpoint: "GET /api/integrations/accounting/reconciliation"
+    description: "View latest reconciliation report"
+    returns: "{ matched, mismatched, details[] }"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/integrations/accounting/tax-mapping"
+    description: "Get tax code mappings for tenant"
+    auth: "MGR/ADM"
+
+  - endpoint: "PUT /api/integrations/accounting/tax-mapping"
+    description: "Update tax code mappings"
+    payload: { mappings: "TaxMapping[]" }
+    auth: "ADM"
+
+  # --- OAuth Flows ---
+  - endpoint: "POST /api/integrations/flowaccount/connect"
+    description: "Initiate FlowAccount OAuth flow"
+    note: "Existing — no changes"
+
+  - endpoint: "GET /api/integrations/flowaccount/callback"
+    description: "OAuth callback handler"
+    note: "Existing — no changes"
+
+  - endpoint: "POST /api/integrations/peak/connect"
+    description: "Save Peak API key + validate connection"
+    payload: { apiKey: "string" }
+    auth: "ADM"
+
+  - endpoint: "POST /api/integrations/sage/connect"
+    description: "Initiate Sage OAuth flow"
+    auth: "ADM"
+
+  - endpoint: "GET /api/integrations/sage/callback"
+    description: "Sage OAuth callback"
+
+  # --- Worker ---
+  - endpoint: "POST /api/workers/accounting-sync"
+    description: "QStash-triggered batch sync worker"
+    auth: "QStash signature verification"
+    logic: "Process up to 50 unsynchronized records per invocation"
+
+  - endpoint: "POST /api/workers/accounting-reconciliation"
+    description: "QStash-triggered weekly reconciliation"
+    auth: "QStash signature verification"
+
+# ──────────────────────────────────────────────
+# SECURITY MATRIX
+# ──────────────────────────────────────────────
+security_matrix:
+  rules:
+    - role: "ADM"
+      resource: "IntegrationConfig"
+      can: ["CONFIGURE", "CONNECT", "DISCONNECT"]
+    - role: "MGR/ADM"
+      resource: "SyncStatus"
+      can: ["READ", "RETRY"]
+    - role: "MGR/ACC"
+      resource: "Reconciliation"
+      can: ["READ", "EXPORT"]
+    - role: "SLS/STF"
+      resource: "AccountingIntegration"
+      can: []
+      note: "No direct access — sync happens automatically"
+  token_security:
+    storage: "Encrypted in IntegrationConfig.credentials (AES-256)"
+    masking: "GET endpoints return masked tokens (****last4)"
+    rotation: "OAuth tokens auto-refreshed before expiry"
+
+# ──────────────────────────────────────────────
+# GEOGRAPHY (Code Locations)
+# ──────────────────────────────────────────────
+geography:
+  tables:
+    existing:
+      - "IntegrationConfig"
+      - "IntegrationDocumentRef"
+      - "IntegrationSyncLog"
+      - "Order"
+      - "Invoice"
+      - "PurchaseOrderV2"
+    new:
+      - "TaxCodeMapping (new table or JSON field in IntegrationConfig)"
+  adapters:
+    existing:
+      - "src/lib/accounting/AccountingService.js"
+      - "src/lib/accounting/FlowAccountAdapter.js"
+      - "src/lib/accounting/ExpressAdapter.js"
+    new:
+      - "src/lib/accounting/PeakAdapter.js"
+      - "src/lib/accounting/SageAdapter.js"
+      - "src/lib/accounting/ReconciliationEngine.js"
+  pages:
+    existing:
+      - "src/app/(dashboard)/integrations/page.jsx"
+    new:
+      - "src/app/(dashboard)/integrations/accounting/page.jsx"     # Dedicated dashboard
+      - "src/app/(dashboard)/integrations/accounting/tax-mapping/page.jsx"
+  components:
+    new:
+      - "src/components/integrations/SyncStatusCard.jsx"
+      - "src/components/integrations/ReconciliationTable.jsx"
+      - "src/components/integrations/TaxMappingEditor.jsx"
+      - "src/components/integrations/ProviderSelector.jsx"
+  api_routes:
+    new:
+      - "src/app/api/integrations/accounting/sync-status/route.js"
+      - "src/app/api/integrations/accounting/retry/route.js"
+      - "src/app/api/integrations/accounting/reconciliation/route.js"
+      - "src/app/api/integrations/accounting/tax-mapping/route.js"
+      - "src/app/api/integrations/peak/connect/route.js"
+      - "src/app/api/integrations/sage/connect/route.js"
+      - "src/app/api/integrations/sage/callback/route.js"
+      - "src/app/api/workers/accounting-sync/route.js"
+      - "src/app/api/workers/accounting-reconciliation/route.js"
+
+# ──────────────────────────────────────────────
+# IMPLEMENTATION TASKS
+# ──────────────────────────────────────────────
+implementation_tasks:
+  phase_1_enhance_existing:
+    - "Add sync-status endpoint with error aggregation"
+    - "Add retry endpoint for failed sync items"
+    - "Build SyncStatusCard dashboard component"
+    - "Add QStash worker for scheduled batch sync"
+    - "Improve error handling in FlowAccountAdapter (retry + dead letter)"
+
+  phase_2_peak_adapter:
+    - "Implement PeakAdapter.js (API key auth)"
+    - "Map Zuri invoice/contact/expense → Peak API format"
+    - "Create /api/integrations/peak/connect endpoint"
+    - "Add Peak to ProviderSelector component"
+    - "Test: full sync cycle with Peak sandbox"
+
+  phase_3_reconciliation:
+    - "Build ReconciliationEngine.js"
+    - "Create weekly reconciliation QStash worker"
+    - "Build ReconciliationTable component"
+    - "Create reconciliation API endpoint"
+    - "Email notification for mismatches"
+
+  phase_4_tax_and_sage:
+    - "Implement tax code mapping (DB + API + UI)"
+    - "Implement SageAdapter.js (OAuth2)"
+    - "Create Sage OAuth flow endpoints"
+    - "Build TaxMappingEditor component"
+
+  testing:
+    - "Unit: Each adapter sync/transform functions"
+    - "Integration: Full sync pipeline (discover → transform → sync → record)"
+    - "E2E: Connect provider → create order → verify sync → reconcile"
+    - "Error: Token expiry, rate limit, duplicate, validation scenarios"

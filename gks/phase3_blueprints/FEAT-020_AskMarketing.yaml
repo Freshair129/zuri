@@ -1,0 +1,105 @@
+# FEAT-020_AskMarketing.yaml
+# Spec Reference: FEAT15-MARKETING-AI.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-020
+  spec_id: FEAT15
+  name: "AskMarketing — Conversational Ads Intelligence"
+  module: "MOD-MARKETING"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT15-MARKETING-AI.md"
+  depends_on: ["FEAT-015_MarketingAds", "FEAT-011_AIAssistant"]
+
+architectural_pattern:
+  pattern: "Conversational AI Sidebar with Business Memory"
+  llm: "Gemini 2.0 Flash"
+  streaming: "SSE"
+  location: "Marketing page right sidebar panel"
+  context: "Redis-cached marketing aggregates + TenantMarketingConfig"
+  session: "Client-side AskSession (max 10 turns, no DB persistence)"
+
+data_logic:
+  intent_classification:
+    types:
+      DIAGNOSE: "Why is ROAS dropping? What's wrong?"
+      RANK: "Which campaigns/ads perform best?"
+      BUDGET: "How should I reallocate budget?"
+      ALERT: "Detect creative fatigue or tracking issues"
+      EXPLAIN: "What does this metric mean?"
+    classifier: "Gemini classifies intent from user question"
+
+  business_memory:
+    model: "TenantMarketingConfig"
+    fields:
+      targetROAS: "float"
+      avgCOGS: "float"
+      dailyBudgetCap: "float"
+      creativeFatigueFreq: "float (frequency threshold)"
+      seasonalPeaks: "string[] (e.g. 'December', 'Songkran')"
+      notes: "string (free-form business context)"
+    ui: "Settings → Marketing → Business Profile"
+
+  fatigue_detection:
+    rule: "frequency > creativeFatigueFreq AND ctr < (baseline * 0.7) AND spend > 500"
+    action: "Include in ALERT response with specific ad IDs"
+
+  roas_reconciliation:
+    slip_roas: "Revenue from verified slip payments / ad spend"
+    meta_roas: "Meta-reported conversion value / ad spend"
+    discrepancy_alert: "unattributed_revenue / total_revenue > 0.6"
+
+  action_cards:
+    structure: "AI response includes structured action suggestions"
+    buttons: ["Do It", "Save", "Explain More"]
+    do_it: "Calls specific API (e.g., pause underperforming ad)"
+
+api_contracts:
+  - endpoint: "POST /api/ai/ask-marketing"
+    description: "Conversational marketing analysis (SSE)"
+    payload:
+      question: "string"
+      history: "ChatMessage[]?"
+      dateRange: "{ from: date, to: date }"
+    returns: "SSE stream (text + action_cards[])"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/marketing/memory"
+    description: "Get TenantMarketingConfig"
+    auth: "MGR/ADM"
+
+  - endpoint: "PUT /api/marketing/memory"
+    description: "Update business memory config"
+    payload: "TenantMarketingConfig fields"
+    auth: "ADM"
+
+security_matrix:
+  rules:
+    - role: "MGR/ADM"
+      resource: "AskMarketing"
+      can: ["USE", "READ"]
+    - role: "SLS/STF"
+      resource: "AskMarketing"
+      can: []
+      note: "No access — sensitive revenue data"
+
+geography:
+  tables:
+    existing:
+      - "TenantMarketingConfig"
+      - "AdDailyMetric, Campaign, AdSet, Ad"
+  components:
+    new:
+      - "src/components/marketing/AskMarketingPanel.jsx"
+      - "src/components/marketing/ActionCard.jsx"
+      - "src/components/marketing/BusinessMemoryForm.jsx"
+  api_routes:
+    existing:
+      - "src/app/api/ai/ask-marketing/route.js"
+      - "src/app/api/marketing/memory/route.js"
+  lib:
+    existing:
+      - "src/lib/ai/marketingOptimizer.js"
+      - "src/lib/repositories/marketingRepo.js"

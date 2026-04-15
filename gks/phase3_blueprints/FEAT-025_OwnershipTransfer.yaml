@@ -1,0 +1,155 @@
+# FEAT-025_OwnershipTransfer.yaml
+# Spec Reference: FEAT21-OWNERSHIP-TRANSFER.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-025
+  spec_id: FEAT21
+  name: "SaaS CRM Lifecycle & Ownership Transfer"
+  module: "MOD-CORE"
+  status: "approved"
+  version: "1.0.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT21-OWNERSHIP-TRANSFER.md"
+  depends_on: ["FEAT-001_MultiTenant"]
+  adr_ref: "ADR-056"
+
+architectural_pattern:
+  pattern: "Atomic Role Transfer with OTP Guard + Full Audit Trail"
+  auth: "Bcrypt OTP (cost 12) + 15-min TTL"
+  transaction: "Prisma.$transaction (atomic role swap — prevents 2 OWNERs)"
+  session: "Invalidate both parties' sessions post-transfer"
+  audit: "SystemAuditLog — all role changes logged immutably"
+
+data_logic:
+  roles:
+    hierarchy: "OWNER > ADM > MGR > STF/SLS"
+    owner_constraints:
+      - "Max 1 OWNER per Tenant at all times"
+      - "OWNER cannot be deleted directly — must transfer first"
+      - "OWNER can delete workspace"
+
+  invitation_flow:
+    create: "OWNER/ADM generates InvitationToken (7-day TTL, 1-use)"
+    email: "Send invite email with /join/{token} link"
+    join: "Recipient sets password → Employee created → token marked used"
+    rate_limit: "10 invites/hour per tenant"
+
+  ownership_transfer_flow:
+    step_1: "OWNER selects recipient (must be ADM)"
+    step_2: "POST /api/settings/ownership/initiate → 6-digit OTP generated → email to OWNER"
+    step_3: "POST /api/settings/ownership/verify → OTP check → atomic swap"
+    step_4: "Atomic swap: fromEmployee.role = ADM, toEmployee.role = OWNER"
+    step_5: "Tenant.ownerEmployeeId updated"
+    step_6: "Both sessions invalidated"
+    step_7: "SystemAuditLog: OWNERSHIP_TRANSFERRED"
+
+  proxy_setup_pattern:
+    use_case: "Agency sets up workspace for client"
+    flow: "Agency staff signs up → sets as OWNER → invites client as ADM → transfers ownership"
+
+  backward_compatibility:
+    existing_tenants: "Assign OWNER to earliest Employee (createdAt ASC) per tenant"
+    role_storage: "String (not Enum) for safe migration"
+
+  v2_roadmap:
+    change: "Employee.email: global @unique → @@unique([email, tenantId])"
+    enables: "Multi-workspace per user + Workspace Switcher UI"
+    requires: "New ADR before implementation"
+
+api_contracts:
+  # --- Invitation ---
+  - endpoint: "POST /api/team/invite"
+    description: "Create invitation token + send email"
+    payload: { email: "string", role: "ADM|MGR|STF|SLS", name: "string?" }
+    auth: "OWNER/ADM"
+
+  - endpoint: "GET /api/team/invite/{token}/validate"
+    description: "Validate token (public — pre-join page)"
+    returns: "{ valid: boolean, email: string, role: string, tenantName: string }"
+    auth: "Public"
+
+  - endpoint: "POST /api/team/join"
+    description: "Complete signup (public + token)"
+    payload: { token: "string", password: "string", name: "string" }
+    auth: "Public"
+
+  - endpoint: "GET /api/team/invitations"
+    description: "List pending invitations"
+    auth: "OWNER/ADM"
+
+  - endpoint: "DELETE /api/team/invite/{token}"
+    description: "Revoke invitation"
+    auth: "OWNER/ADM"
+
+  # --- Ownership Transfer ---
+  - endpoint: "GET /api/settings/ownership"
+    description: "View current OWNER + eligible ADM recipients"
+    auth: "OWNER"
+
+  - endpoint: "POST /api/settings/ownership"
+    description: "Initiate transfer — generate OTP → email"
+    payload: { toEmployeeId: "uuid" }
+    auth: "OWNER"
+
+  - endpoint: "POST /api/settings/ownership/verify"
+    description: "Verify OTP → atomic transfer"
+    payload: { otp: "string" }
+    auth: "OWNER"
+    side_effects:
+      - "Atomic role swap in Prisma.$transaction"
+      - "Invalidate both sessions"
+      - "SystemAuditLog: OWNERSHIP_TRANSFERRED"
+
+  - endpoint: "DELETE /api/settings/ownership"
+    description: "Cancel pending transfer"
+    auth: "OWNER"
+    note: "Spec uses DELETE — maps to /api/settings/ownership/cancel in implementation"
+
+security_matrix:
+  rules:
+    - role: "OWNER"
+      resource: "OwnershipTransfer"
+      can: ["INITIATE", "VERIFY", "CANCEL"]
+    - role: "OWNER/ADM"
+      resource: "InvitationToken"
+      can: ["CREATE", "READ", "REVOKE"]
+    - role: "PUBLIC"
+      resource: "InvitationToken"
+      can: ["VALIDATE", "USE_ONCE"]
+  otp_security:
+    hash: "bcrypt cost 12"
+    ttl: "15 minutes"
+    length: "6 digits"
+    rate_limit: "3 attempts before lockout"
+
+geography:
+  tables:
+    new:
+      - "InvitationToken (id, tenantId, token, email, role, invitedById, usedAt, expiresAt)"
+      - "OwnershipTransferRequest (id, tenantId, fromEmployeeId, toEmployeeId, otpHash, status, expiresAt)"
+      - "SystemAuditLog (id, tenantId, type, actorId, targetId, metadata, createdAt)"
+    modify:
+      - "Tenant (add: ownerEmployeeId FK to Employee)"
+      - "Employee (role: expand enum to include OWNER)"
+  pages:
+    existing:
+      - "src/app/(auth)/onboarding/page.jsx"
+    new:
+      - "src/app/(auth)/join/[token]/page.jsx"
+      - "src/app/(dashboard)/settings/ownership/page.jsx"
+      - "src/app/(dashboard)/settings/team/page.jsx"
+  api_routes:
+    existing:
+      - "src/app/api/team/invite/route.js"
+      - "src/app/api/team/join/route.js"
+      - "src/app/api/settings/ownership/route.js"
+      - "src/app/api/settings/ownership/verify/route.js"
+    new:
+      - "src/app/api/team/invitations/route.js"
+      - "src/app/api/team/invite/[token]/validate/route.js"
+      - "src/app/api/team/invite/[token]/route.js (DELETE)"
+  lib:
+    existing:
+      - "src/lib/repositories/invitationRepo.js"
+      - "src/lib/repositories/ownershipRepo.js"

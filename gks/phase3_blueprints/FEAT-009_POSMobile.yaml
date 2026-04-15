@@ -1,0 +1,230 @@
+# FEAT-009_POSMobile.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-009
+  name: "POS Mobile — Customer Self-Order & Staff Handheld"
+  module: "MOD-POS"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "gks/02_features/FEAT--pos-mobile.md"
+  depends_on: ["FEAT-006_POS", "FEAT-003_Billing"]
+
+# ──────────────────────────────────────────────
+# OVERVIEW
+# ──────────────────────────────────────────────
+# Two modes:
+#   1. CUSTOMER_SELF_ORDER — QR scan → menu → cart → pay (no auth required)
+#   2. STAFF_HANDHELD — authenticated mobile POS for waitstaff / cashiers
+#
+# Existing code: CartDrawer.jsx, PaymentFlow.jsx, mobile/page.jsx
+# Gap: offline support, inventory guard, receipt print, reorder flow
+
+architectural_pattern:
+  pattern: "Progressive Web App (PWA) with Offline-First Cart"
+  rendering: "Next.js App Router — /pos/mobile route group"
+  offline_strategy: "Service Worker + IndexedDB for cart persistence"
+  sync_protocol: "Optimistic UI → Background Sync on reconnect"
+  realtime: "Pusher (order-status channel per tenant)"
+  caching: "Redis (product catalog: 120s TTL)"
+
+# ──────────────────────────────────────────────
+# DATA LOGIC
+# ──────────────────────────────────────────────
+data_logic:
+  qr_entry_flow:
+    trigger: "Customer scans QR code at table"
+    url_pattern: "/join/{tenantSlug}?table={tableId}"
+    resolution:
+      - "Validate tenantSlug → fetch Tenant config"
+      - "Validate tableId → fetch POSTable with zone info"
+      - "Render public menu (no auth required)"
+    session: "Anonymous session token stored in cookie (30 min TTL)"
+
+  cart_management:
+    storage: "React state (primary) + IndexedDB (persistence fallback)"
+    operations:
+      add: "Product validation → inventory availability check → add to cart"
+      update: "Quantity bounds check (min: 1, max: product.maxQty || 99)"
+      remove: "Splice item from cart array"
+      clear: "Post-payment automatic clear"
+    schedule_slots:
+      enabled: true
+      source: "GET /api/pos/schedules"
+      binding: "Each cart item may have optional schedule_slot_id"
+
+  inventory_guard:
+    trigger: "Before order confirmation"
+    action: "Real-time stock check via GET /api/pos/mobile/availability"
+    failure: "Toast notification + mark unavailable items in red"
+
+  offline_behavior:
+    cart_persistence: "IndexedDB — survives page reload / network loss"
+    order_queue: "Failed POST requests queued in IndexedDB"
+    sync_on_reconnect: "Service Worker background sync API"
+    conflict_resolution: "Server wins — if product unavailable, notify user"
+
+  order_lifecycle:
+    creation: "POST /api/pos/orders (reuses FEAT-006 endpoint)"
+    fields:
+      required: [items, orderType, tableId_or_customerId]
+      optional: [notes, scheduleSlotId, guestCount]
+    post_create:
+      - "Pusher event: tenant:{tenantId}:order:new"
+      - "Kitchen notification (if orderType includes food)"
+      - "Cart auto-clear"
+
+# ──────────────────────────────────────────────
+# API CONTRACTS
+# ──────────────────────────────────────────────
+api_contracts:
+  - endpoint: "GET /api/pos/mobile/menu"
+    description: "Optimized product catalog for mobile rendering"
+    params: { tenantId: "uuid", tableId: "uuid?" }
+    returns: "Grouped by category, includes images (thumbnail), prices, availability flags"
+    cache: "Redis — pos:menu:{tenantId} — 120s TTL"
+    auth: "Public (no auth required for customer self-order)"
+
+  - endpoint: "GET /api/pos/mobile/availability"
+    description: "Real-time stock check for cart items before confirmation"
+    params: { productIds: "uuid[]" }
+    returns: "{ productId: uuid, available: boolean, stock: number }[]"
+    auth: "Public"
+
+  - endpoint: "POST /api/pos/mobile/sync"
+    description: "Offline order queue sync — batch submit queued orders"
+    payload: { orders: "OfflineOrder[]" }
+    returns: "{ synced: number, failed: { orderId, reason }[] }"
+    auth: "Staff only (JWT)"
+    idempotency: "Client-generated orderId used as idempotency key"
+
+  # Existing endpoints reused:
+  - endpoint: "POST /api/pos/orders"
+    note: "Reuse from FEAT-006 — add mobile-specific fields (source: 'MOBILE')"
+
+  - endpoint: "GET /api/pos/schedules"
+    note: "Reuse from FEAT-006 — time slot selection for appointments"
+
+# ──────────────────────────────────────────────
+# PAYMENT INTEGRATION
+# ──────────────────────────────────────────────
+payment_integration:
+  methods:
+    - id: "QR_PROMPTPAY"
+      flow: "Generate QR → Customer scans with banking app → Slip verification"
+      provider: "promptpay.io"
+      verification: "POST /api/payments/verify-slip (FEAT-003)"
+
+    - id: "CASH"
+      flow: "Staff-only — manual cash entry with denomination buttons"
+      denominations: [1000, 500, 100, 50, 20, 10, 5, 2, 1]
+
+    - id: "CARD"
+      flow: "EDC terminal integration — amount push via WebUSB"
+      fallback: "Manual card entry confirmation by staff"
+
+  receipt:
+    e_receipt: "Auto-dispatch via LINE/FB if customer linked"
+    print: "ESC/POS via WebUSB (staff mode only)"
+    pdf: "POST /api/invoices/generate-pdf (FEAT-003)"
+
+# ──────────────────────────────────────────────
+# PWA CONFIGURATION
+# ──────────────────────────────────────────────
+pwa_config:
+  manifest:
+    name: "Zuri POS"
+    short_name: "ZuriPOS"
+    display: "standalone"
+    theme_color: "#1a1a2e"
+    background_color: "#ffffff"
+  service_worker:
+    strategy: "StaleWhileRevalidate for menu assets"
+    cache_list: ["product images", "category icons", "font files"]
+    background_sync: "order-sync queue"
+  install_prompt: "Show after 2nd visit within 7 days"
+
+# ──────────────────────────────────────────────
+# SECURITY MATRIX
+# ──────────────────────────────────────────────
+security_matrix:
+  rules:
+    - role: "PUBLIC"
+      resource: "Menu"
+      can: ["READ"]
+      scope: "tenant-scoped via URL slug"
+    - role: "PUBLIC"
+      resource: "Order"
+      can: ["CREATE"]
+      condition: "Valid table session token"
+    - role: "SLS/STF"
+      resource: "Order"
+      can: ["CREATE", "READ", "UPDATE"]
+      condition: "Authenticated + tenant match"
+    - role: "MGR/ADM"
+      resource: "MobileConfig"
+      can: ["CONFIGURE"]
+      scope: "Menu visibility, payment methods, QR settings"
+
+# ──────────────────────────────────────────────
+# GEOGRAPHY (Code Locations)
+# ──────────────────────────────────────────────
+geography:
+  tables:
+    - "POSTable"
+    - "POSZone"
+    - "Order"
+    - "OrderItem"
+    - "Product"
+    - "Transaction"
+  pages:
+    - "src/app/(dashboard)/pos/mobile/page.jsx"        # Staff handheld
+    - "src/app/(public)/join/[tenantSlug]/page.jsx"     # Customer self-order (NEW)
+  components:
+    existing:
+      - "src/components/pos/CartDrawer.jsx"
+      - "src/components/pos/PaymentFlow.jsx"
+      - "src/components/pos/ReceiptModal.jsx"
+    new:
+      - "src/components/pos/mobile/MobileMenuGrid.jsx"  # Product grid for mobile
+      - "src/components/pos/mobile/QRScanner.jsx"       # QR code entry handler
+      - "src/components/pos/mobile/OfflineBanner.jsx"   # Network status indicator
+  api_routes:
+    new:
+      - "src/app/api/pos/mobile/menu/route.js"
+      - "src/app/api/pos/mobile/availability/route.js"
+      - "src/app/api/pos/mobile/sync/route.js"
+  service_worker:
+    - "public/sw.js"
+
+# ──────────────────────────────────────────────
+# IMPLEMENTATION TASKS
+# ──────────────────────────────────────────────
+implementation_tasks:
+  phase_1_core:
+    - "Create GET /api/pos/mobile/menu with Redis caching"
+    - "Create GET /api/pos/mobile/availability endpoint"
+    - "Build MobileMenuGrid.jsx component"
+    - "Add inventory guard to cart confirmation flow"
+    - "Wire CartDrawer → PaymentFlow → receipt dispatch"
+
+  phase_2_offline:
+    - "Configure next-pwa or custom Service Worker"
+    - "Implement IndexedDB cart persistence"
+    - "Build offline order queue + background sync"
+    - "Create POST /api/pos/mobile/sync endpoint"
+    - "Add OfflineBanner network status component"
+
+  phase_3_customer_self_order:
+    - "Build /join/[tenantSlug] public route"
+    - "QR code generation for each table (admin setting)"
+    - "Anonymous session token flow"
+    - "Customer self-order → kitchen notification pipeline"
+
+  testing:
+    - "Unit: Cart operations (add/update/remove/clear)"
+    - "Integration: Order creation → payment → receipt flow"
+    - "E2E: Full QR scan → order → payment → receipt (Playwright)"
+    - "Offline: Simulate network loss → queue → reconnect → sync"

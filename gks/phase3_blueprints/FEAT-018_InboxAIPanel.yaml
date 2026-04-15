@@ -1,0 +1,90 @@
+# FEAT-018_InboxAIPanel.yaml
+# Spec Reference: FEAT13-AGENT.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-018
+  spec_id: FEAT13
+  name: "Inbox AI Assistant Panel (Reply Composer & Ask AI)"
+  module: "MOD-INBOX"
+  status: "stable"
+  version: "1.0.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT13-AGENT.md"
+  depends_on: ["FEAT-004_Inbox", "FEAT-002_CustomerProfile", "FEAT-011_AIAssistant"]
+
+architectural_pattern:
+  pattern: "Streaming AI Co-pilot in Inbox Right Panel"
+  llm: "Gemini 2.0 Flash"
+  streaming: "Server-Sent Events (SSE)"
+  context: "Auto-injected: customer profile + last 10 messages"
+  location: "Inbox Right Panel — Tab 3 (AI)"
+
+data_logic:
+  compose_reply:
+    input: "Staff raw text draft"
+    pipeline: "Text → Gemini (tone transform) → polished message"
+    tones: ["formal", "casual", "professional", "empathetic"]
+    context_injection: ["customerName", "channel", "lastMessageSnippet"]
+    cta_buttons: ["Copy to Chat", "Edit", "Regenerate", "Shorter", "Longer"]
+
+  ask_ai:
+    description: "Chat interface for staff to query about customer/situation"
+    context_injection:
+      - "Customer: name, stage, tags, totalSpend"
+      - "Last 10 messages (summary)"
+      - "Tenant product/service info from system prompt"
+    streaming: "SSE — token-by-token rendering"
+    no_new_db_model: true
+
+  session:
+    storage: "React state (client-side, no persistence)"
+    max_turns: 10
+    reset: "On conversation switch"
+
+api_contracts:
+  - endpoint: "POST /api/ai/compose-reply"
+    description: "Transform staff draft to polished customer message"
+    payload: { draft: "string", tone: "string", conversationId: "uuid" }
+    returns: "{ polished: string }"
+    auth: "SLS/STF/MGR"
+
+  - endpoint: "POST /api/ai/ask"
+    description: "SSE stream — Ask AI chat with customer context"
+    payload: { question: "string", conversationId: "uuid", history: "ChatMessage[]?" }
+    returns: "SSE stream of text tokens"
+    auth: "SLS/STF/MGR"
+
+security_matrix:
+  rules:
+    - role: "SLS/STF"
+      resource: "AIPanel"
+      can: ["USE"]
+      condition: "Access to assigned conversations only"
+    - role: "MGR/ADM"
+      resource: "AIPanel"
+      can: ["USE"]
+      scope: "All conversations in tenant"
+
+geography:
+  tables:
+    existing:
+      - "Conversation"
+      - "Message"
+      - "Customer"
+      - "CustomerInsight"
+  components:
+    existing:
+      - "src/components/inbox/RightPanel.jsx (add Tab 3: AI)"
+    new:
+      - "src/components/inbox/AIPanel.jsx"
+      - "src/components/inbox/ComposeAssist.jsx"
+      - "src/components/inbox/AskAIChat.jsx"
+  api_routes:
+    existing:
+      - "src/app/api/ai/compose-reply/route.js"
+      - "src/app/api/ai/ask/route.js"
+  lib:
+    existing:
+      - "src/lib/ai/assistant.js"
+      - "src/lib/ai/assistantIntent.js"

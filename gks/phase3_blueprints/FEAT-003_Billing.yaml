@@ -1,0 +1,70 @@
+# FEAT-003_Billing.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-003
+  name: "Billing, Invoicing & Slip OCR"
+  module: "MOD-BILLING"
+  status: "stable"
+  version: "1.0.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--billing.md"
+
+architectural_pattern:
+  pattern: "Revenue Attribution Hub"
+  repository: "src/lib/repositories/paymentRepo.js"
+  integrations:
+    ocr: "Gemini Vision API"
+    messaging: ["FB Messenger API", "LINE Messaging API"]
+    printing: "WebUSB / ESC-POS"
+
+data_logic:
+  invoice_generation:
+    trigger: "Order Confirmation in POS"
+    naming: "INV-YYYYMMDD-NNN (Daily sequence)"
+    fields: [subtotal, discount, vat, total]
+
+  slip_verification:
+    confidence_threshold: 0.80
+    duplicate_gate: "Check refNumber uniqueness across all Transactions"
+    auto_confirmation:
+      condition: "confidence >= 0.80 && amount_match == true"
+      action: "Create Transaction + Set Order to COMPLETED"
+
+runtime_hooks:
+  post_payment:
+    - name: "cart_clear"
+      trigger: "Transaction status: SUCCESS"
+      action: "Clear LocalStorage/Session Cart items for the target Customer"
+    - name: "receipt_dispatch"
+      action: "Automated generation of e-Receipt and dispatch via preferred channel (FB/LINE/Email)"
+
+api_contracts:
+  - endpoint: "POST /api/payments/verify-slip"
+    payload: { image_base64: "string", invoice_id: "uuid" }
+    returns: { verified: "boolean", confidence: "float", transaction_id: "uuid?" }
+
+  - endpoint: "POST /api/invoices/generate-pdf"
+    description: "Render HTML/React to PDF and upload to Supabase Storage"
+
+security_matrix:
+  rules:
+    - role: "SLS/AGT"
+      resource: "Invoice"
+      can: ["CREATE", "READ", "UPDATE"]
+    - role: "MGR/ACC"
+      resource: "Invoice"
+      can: ["CREATE", "READ", "UPDATE", "VOID"]
+    - role: "ADM"
+      resource: "HardwareSettings"
+      can: ["MANAGE"]
+
+geography:
+  tables:
+    - "Invoice"
+    - "Transaction"
+    - "PaymentSlip"
+  hooks:
+    - "src/hooks/usePrinter.ts"
+    - "src/middleware/paymentGuard.ts"

@@ -1,0 +1,121 @@
+# FEAT-019_CRMAIInsights.yaml
+# Spec Reference: FEAT14-CRM-AI.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-019
+  spec_id: FEAT14
+  name: "CRM AI Intelligence — Auto-Enrichment & Behavioral Scoring"
+  module: "MOD-CRM"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT14-CRM-AI.md"
+  depends_on: ["FEAT-005_CRM", "FEAT-011_AIAssistant", "FEAT-004_Inbox"]
+
+architectural_pattern:
+  pattern: "Async AI Enrichment Pipeline + Realtime Scoring Alerts"
+  llm: "Gemini 2.0 Flash"
+  queue: "QStash (enrichment worker + daily pattern cron)"
+  realtime: "Pusher (hot lead alert: score >= 70)"
+  caching: "Redis (insight cache per customer: 10m TTL)"
+
+data_logic:
+  auto_enrichment:
+    trigger: "After conversation closes or 30min inactivity"
+    worker: "POST /api/workers/crm-enrich"
+    pipeline:
+      - "Fetch last N messages from Conversation"
+      - "Gemini prompt: extract interests, objections, commStyle, keyFacts"
+      - "Upsert CustomerInsight"
+      - "Flag manualOverride=false (AI-generated)"
+    model: "CustomerInsight"
+
+  intent_scoring:
+    range: "0–100"
+    tiers: { hot: ">=70", warm: "31-69", cold: "0-30" }
+    signals:
+      positive: ["asks price", "asks schedule", "sends payment proof", "high response frequency"]
+      negative: ["long inactivity", "short replies", "negative keywords"]
+    update_trigger: "After each new message"
+    alert: "Pusher: crm:hot-lead → notify assigned agent (score crosses 70)"
+
+  churn_scoring:
+    range: "0–100"
+    tiers: { at_risk: ">=70", watch: "41-69", stable: "0-40" }
+    signals:
+      risk: ["no contact > 14 days", "complaint keywords", "refund request", "unread messages"]
+    update_trigger: "Daily cron 02:00 ICT"
+
+  pattern_analysis:
+    worker: "POST /api/workers/crm-pattern"
+    schedule: "QStash cron — daily 02:00 ICT"
+    output:
+      topObjections: "array of objection phrases (cross-customer)"
+      topInterests: "array of interest topics"
+      conversionTips: "AI-generated insights"
+      bestAdSegments: "Ad IDs with highest intent-score customers"
+    stored: "TenantCRMPattern (1 record per tenant)"
+
+api_contracts:
+  - endpoint: "GET /api/crm/insights/{customerId}"
+    description: "Get CustomerInsight for specific customer"
+    returns: "CustomerInsight + intentScore + churnScore"
+    auth: "SLS/STF/MGR"
+
+  - endpoint: "GET /api/crm/patterns"
+    description: "Get tenant-level CRM patterns and insights"
+    returns: "TenantCRMPattern"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/ai/crm-followup-draft"
+    description: "SSE — AI drafts follow-up message for warm/at-risk customers"
+    payload: { customerId: "uuid", context: "warm_lead|at_risk" }
+    returns: "SSE stream"
+    auth: "SLS/STF/MGR"
+
+  - endpoint: "POST /api/workers/crm-enrich"
+    description: "QStash worker — enrich + score single customer"
+    payload: { customerId: "uuid", conversationId: "uuid" }
+    auth: "QStash signature"
+
+  - endpoint: "POST /api/workers/crm-pattern"
+    description: "QStash cron — daily cross-customer pattern analysis"
+    auth: "QStash signature"
+
+security_matrix:
+  rules:
+    - role: "SLS/STF"
+      resource: "CustomerInsight"
+      can: ["READ"]
+      condition: "Assigned customers only"
+    - role: "MGR/ADM"
+      resource: "CustomerInsight"
+      can: ["READ", "OVERRIDE"]
+    - role: "MGR/ADM"
+      resource: "CRMPattern"
+      can: ["READ"]
+
+geography:
+  tables:
+    existing:
+      - "CustomerInsight (interests[], objections[], commStyle, keyFacts[], intentScore, churnScore)"
+      - "TenantCRMPattern"
+      - "Customer (add: intentScore float, churnScore float)"
+  components:
+    new:
+      - "src/components/crm/InsightPanel.jsx"
+      - "src/components/crm/ScoreIndicator.jsx"
+      - "src/components/crm/PatternDashboard.jsx"
+  api_routes:
+    new:
+      - "src/app/api/crm/insights/[customerId]/route.js"
+      - "src/app/api/crm/patterns/route.js"
+      - "src/app/api/ai/crm-followup-draft/route.js"
+      - "src/app/api/workers/crm-enrich/route.js"
+      - "src/app/api/workers/crm-pattern/route.js"
+  lib:
+    existing:
+      - "src/lib/ai/customerProfiler.js"
+      - "src/lib/ai/conversationAnalyzer.js"
+      - "src/lib/repositories/customerInsightRepo.js"

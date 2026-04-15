@@ -1,0 +1,118 @@
+# FEAT-021_AccountingPlatform.yaml
+# Spec Reference: FEAT17-ACCOUNTING-PLATFORM.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# NOTE: This blueprint covers the platform-level accounting strategy.
+# Express-specific adapter is in FEAT-022_ExpressIntegration.yaml
+
+metadata:
+  id: FEAT-021
+  spec_id: FEAT17
+  name: "Accounting Platform Integration — FlowAccount & Multi-Provider"
+  module: "MOD-BILLING"
+  status: "stable"
+  version: "1.2.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT17-ACCOUNTING-PLATFORM.md"
+  depends_on: ["FEAT-003_Billing", "FEAT-001_MultiTenant"]
+  note: "Supersedes FEAT-013_AccountingIntegration.yaml (merged/replaced)"
+
+architectural_pattern:
+  pattern: "Adapter-Orchestrator — Zuri as Source of Truth, Push to Provider"
+  philosophy: "Sell in Zuri → accounting updates in accountant's software"
+  orchestrator: "src/lib/accounting/AccountingService.js"
+  supported_providers:
+    phase1: "FlowAccount (OAuth2, fully automated)"
+    phase2: "Express (semi-auto via X-import Excel email)"
+    phase3: "PEAK, Sage (TBD)"
+  idempotency: "IntegrationDocumentRef — ref format ZRI-{orderId}"
+  encryption: "OAuth tokens encrypted at rest (AES-256)"
+
+data_logic:
+  sync_triggers:
+    realtime: "Post-payment hook (Order COMPLETED)"
+    scheduled: "QStash cron every 4 hours — batch missed records"
+    manual: "Admin 'Sync Now' button"
+
+  data_mapping:
+    order_to_invoice:
+      fields: [orderId, items, subtotal, discount, vat, total, customerName]
+      ref: "ZRI-{orderId}"
+    customer_to_contact:
+      fields: [customerId, name, phone, email, taxId]
+    purchase_order_to_expense:
+      fields: [purchaseOrderId, supplierId, items, total, vat]
+
+  error_handling:
+    retry: "Exponential backoff — 30s, 120s, 480s (max 3)"
+    token_expiry: "Auto-refresh + retry once"
+    duplicate: "Skip if IntegrationDocumentRef already has externalRef"
+    dead_letter: "Flag MANUAL_REVIEW after max retries"
+
+  flowaccount_oauth:
+    grant_type: "authorization_code"
+    scopes: ["openid", "email", "offline_access", "cash-invoices", "contacts"]
+    token_endpoint: "https://openapi.flowaccount.com/token"
+    api_base: "https://openapi.flowaccount.com/v1"
+
+api_contracts:
+  - endpoint: "GET /api/integrations/accounting"
+    description: "Get integration config (tokens masked)"
+    auth: "MGR/ADM"
+
+  - endpoint: "PUT /api/integrations/accounting"
+    description: "Update provider config"
+    auth: "ADM"
+
+  - endpoint: "POST /api/integrations/accounting/export"
+    description: "Manual export or force sync"
+    payload: { dateFrom: "date", dateTo: "date", type: "invoice|expense" }
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/integrations/accounting/sync-logs"
+    description: "Sync history and error log"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/integrations/flowaccount/connect"
+    auth: "ADM"
+
+  - endpoint: "GET /api/integrations/flowaccount/callback"
+    description: "OAuth callback"
+
+  - endpoint: "POST /api/integrations/flowaccount/disconnect"
+    auth: "ADM"
+
+security_matrix:
+  rules:
+    - role: "ADM"
+      resource: "IntegrationConfig"
+      can: ["CONFIGURE", "CONNECT", "DISCONNECT"]
+    - role: "MGR/ADM"
+      resource: "SyncLogs"
+      can: ["READ", "EXPORT"]
+  token_security:
+    storage: "Encrypted in IntegrationConfig.credentials"
+    masking: "API returns masked (****last4)"
+
+geography:
+  tables:
+    - "IntegrationConfig"
+    - "IntegrationSyncLog"
+    - "IntegrationDocumentRef"
+    - "Order"
+    - "Invoice"
+    - "PurchaseOrderV2"
+  lib:
+    existing:
+      - "src/lib/accounting/AccountingService.js"
+      - "src/lib/accounting/FlowAccountAdapter.js"
+  pages:
+    - "src/app/(dashboard)/integrations/page.jsx"
+    - "src/app/(dashboard)/settings/page.jsx"
+  api_routes:
+    existing:
+      - "src/app/api/integrations/accounting/route.js"
+      - "src/app/api/integrations/accounting/export/route.js"
+      - "src/app/api/integrations/accounting/sync-logs/route.js"
+      - "src/app/api/integrations/flowaccount/callback/route.js"
+      - "src/app/api/integrations/flowaccount/connect/route.js"
+      - "src/app/api/integrations/flowaccount/disconnect/route.js"

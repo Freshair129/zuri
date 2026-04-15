@@ -1,0 +1,65 @@
+# FEAT-006_POS.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-006
+  name: "POS & Floor Plan Management"
+  module: "MOD-POS"
+  status: "stable"
+  version: "1.2.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--pos-onsite.md"
+
+architectural_pattern:
+  pattern: "Event-Driven Seating & Order Hub"
+  realtime: "Pusher (Table status & Seating Sync)"
+  caching: "Redis (Product Catalog Cache)"
+  routing: "Client-side Viewport Guard (Desktop vs Mobile Redirect)"
+
+data_logic:
+  seating_logic:
+    merge_strategy: "Recursive group update via merge_group_id"
+    monitoring: "Polling every 30s + Pusher Event Override"
+    guest_management: "Guest-to-Capacity ratio calculation"
+
+  order_lifecycle:
+    creation: "Link to table_id (Onsite) or customer_id (Delivery)"
+    payment_integration: "Direct hook to MOD-BILLING (Invoice creation)"
+    completion: "Success trigger -> Update Customer Stage to PAID"
+
+api_contracts:
+  - endpoint: "GET /api/pos/tables"
+    params: { zone_id: "uuid?", monitor: "boolean" }
+    returns: "JSON Floor Plan (X, Y coordinates + status)"
+
+  - endpoint: "POST /api/pos/tables/merge"
+    payload: { primary_id: "uuid", children_ids: "uuid[]" }
+    rule: "Transactional atomic merge"
+
+  - endpoint: "POST /api/pos/orders"
+    payload: { items: "{ productId, qty }[]", table_id: "uuid?" }
+    side_effects: ["Update Table Status to OCCUPIED", "Notify Kitchen"]
+
+security_matrix:
+  rules:
+    - role: "SLS/AGT"
+      resource: "Order"
+      can: ["CREATE", "READ", "UPDATE"]
+    - role: "MGR/ADM"
+      resource: "FloorPlan"
+      can: ["CONFIGURE"]
+    - role: "STF"
+      resource: "Monitoring"
+      can: ["READ"]
+
+geography:
+  tables:
+    - "POSTable"
+    - "POSZone"
+    - "Order"
+    - "OrderItem"
+  components:
+    - "src/components/pos/FloorPlan.tsx"
+    - "src/components/pos/CartPanel.tsx"
+    - "src/repositories/order.repo.ts"

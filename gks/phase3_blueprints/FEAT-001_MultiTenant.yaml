@@ -1,0 +1,62 @@
+# FEAT-001_MultiTenant.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-001
+  name: "Multi-Tenant Foundation"
+  module: "MOD-CORE"
+  status: "stable"
+  version: "1.0.1"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--multi-tenant.md"
+
+architectural_pattern:
+  pattern: "Shared DB + Row-Level Isolation"
+  isolation_key: "tenantId"
+  infrastructure:
+    db: "PostgreSQL (Prisma)"
+    security: "Supabase RLS"
+    routing: "Next.js Middleware (Subdomain)"
+
+data_logic:
+  injection:
+    mechanism: "Prisma Middleware / Extension"
+    action: "Automatically append { tenantId: session.tenantId } to all CRUD queries for Group A tables"
+  
+  rls_policy:
+    check: "auth.jwt() -> 'tenant_id' == table.tenant_id"
+    owner: "Supabase"
+
+runtime_hooks:
+  middleware:
+    - name: "tenant_resolver"
+      path: "src/middleware.ts"
+      logic: |
+        1. Extract host from request
+        2. Resolve subdomain slug
+        3. Lookup tenantId from Cache/DB
+        4. Append tenantId to request headers (x-tenant-id)
+
+  session:
+    - name: "next_auth_augmentation"
+      logic: "Inject tenantId and tenantSlug into the Session/JWT during login"
+
+geography:
+  isolated_tables:
+    - "Customer"
+    - "Order"
+    - "Enrollment"
+    - "Product"
+    - "KitchenStock"
+  global_tables:
+    - "Tenant"
+    - "MarketPrice"
+    - "User (Internal)"
+
+verification_plan:
+  automated:
+    - "Test cross-tenant leak: Query Tenant A data using Tenant B session must return null/403"
+    - "Verify Prisma auto-filter activation"
+  manual:
+    - "Login with subdomain and verify header presence"

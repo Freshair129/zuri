@@ -1,0 +1,101 @@
+# FEAT-022_ExpressIntegration.yaml
+# Spec Reference: FEAT18-EXPRESS-INTEGRATION.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-022
+  spec_id: FEAT18
+  name: "Express Accounting Integration — Semi-Auto X-Import"
+  module: "MOD-BILLING"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT18-EXPRESS-INTEGRATION.md"
+  depends_on: ["FEAT-021_AccountingPlatform", "FEAT-003_Billing"]
+
+architectural_pattern:
+  pattern: "Semi-Auto File Export via Email + Async QStash"
+  method: "Generate X-import Excel → upload to Supabase Storage → email accountant"
+  auth: "API Key (encrypted in IntegrationConfig)"
+  sync_modes:
+    realtime: "Per order completion (QStash fire-and-forget)"
+    batch: "Daily cron 23:00 ICT (QStash)"
+    manual: "'Sync Now' button in settings"
+
+data_logic:
+  excel_generation:
+    invoice_columns:
+      - "ref (ZRI-{orderId})"
+      - "date (Buddhist Era: DD/MM/YYYY+543)"
+      - "customer_name"
+      - "items (pipe-separated)"
+      - "subtotal, discount, vat, total"
+      - "payment_method"
+    expense_columns:
+      - "po_ref"
+      - "date (Buddhist Era)"
+      - "supplier"
+      - "category (mapped to Express account code)"
+      - "amount, vat"
+    date_format: "Buddhist Era (+543 years)"
+
+  account_code_mapping:
+    food_and_beverage: "4000"
+    service_charge: "4100"
+    packaging: "5200"
+    operating_expense: "6000"
+    customizable: "Admin can override per category"
+
+  email_delivery:
+    provider: "Resend API"
+    recipient: "Accountant email (from IntegrationConfig)"
+    subject: "Zuri Export — {date} — {count} records"
+    attachment: "Generated .xlsx file"
+
+  retry:
+    max_attempts: 5
+    backoff: "Exponential (30s, 120s, 480s, 1800s, 3600s)"
+    failure: "Log to IntegrationSyncLog + email alert to Admin"
+
+api_contracts:
+  - endpoint: "POST /api/workers/sync-express"
+    description: "QStash worker — generate Excel + email accountant"
+    payload: { mode: "realtime|batch|manual", orderId: "uuid?", dateFrom: "date?", dateTo: "date?" }
+    auth: "QStash signature"
+
+  - endpoint: "POST /api/integrations/express/connect"
+    description: "Save Express API key + accountant email + validate"
+    payload: { apiKey: "string", companyId: "string", accountantEmail: "string" }
+    auth: "ADM"
+
+  - endpoint: "POST /api/integrations/express/test"
+    description: "Send test export to verify connection"
+    auth: "ADM"
+
+security_matrix:
+  rules:
+    - role: "ADM"
+      resource: "ExpressConfig"
+      can: ["CONFIGURE", "CONNECT", "TEST"]
+    - role: "MGR"
+      resource: "ExpressSync"
+      can: ["TRIGGER_MANUAL"]
+
+geography:
+  tables:
+    existing:
+      - "IntegrationConfig (provider=express)"
+      - "IntegrationSyncLog"
+      - "IntegrationDocumentRef"
+  lib:
+    existing:
+      - "src/lib/accounting/ExpressAdapter.js"
+      - "src/lib/accounting/AccountingService.js"
+  api_routes:
+    new:
+      - "src/app/api/integrations/express/connect/route.js"
+      - "src/app/api/integrations/express/test/route.js"
+      - "src/app/api/workers/sync-express/route.js"
+  components:
+    new:
+      - "src/components/integrations/ExpressConfigForm.jsx"

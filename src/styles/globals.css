@@ -1,0 +1,375 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Zuri Heritage Design System ── */
+
+:root {
+  /* Brand: Amber Citrus */
+  --brand:           #E8820C;
+  --brand-hover:     #F09420;
+  --brand-dark:      #B86A08;
+  --brand-glow:      rgba(232, 130, 12, 0.35);
+  --brand-tint:      #FDE8D0;
+  --brand-surface:   #FFF8F0;
+
+  /* Surface */
+  --surface:         #F7F8FA;
+  --surface-card:    #FFFFFF;
+  --surface-mid:     #EFF1F3;
+
+  /* Rest Blue (Eye Relief) */
+  --rest-blue:       #D6ECFA;
+  --rest-blue-text:  #3D7A9E;
+
+  /* Mustard (Supporting) */
+  --mustard:         #C6A052;
+  --mustard-tint:    #F5ECD7;
+
+  /* Glass Styling Tokens */
+  --glass-blur:      blur(14px);
+  --glass-bg:        rgba(255, 255, 255, 0.06);
+  --glass-border:    rgba(255, 255, 255, 0.12);
+
+  /* Navigation Glass (Shared) */
+  --nav-glass-bg:    rgba(31, 41, 55, 0.98);
+  --nav-glass-blur:  blur(14px);
+}
+
+@layer base {
+  body {
+    font-family: 'IBM Plex Sans Thai', 'Manrope', sans-serif;
+  }
+
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+
+  /* Dark mode base transitions */
+  html {
+    transition: color-scheme 0.3s;
+  }
+}
+
+@layer utilities {
+  /* Typography */
+  .thai-line-height { line-height: 1.8; }
+
+  /* Decorative left-border lead */
+  .ornate-lead {
+    border-left: 4px solid #795900;
+    padding-left: 1.5rem;
+  }
+
+  /* Gradient utilities — Refined Modern Amber */
+  .gold-gradient {
+    background: linear-gradient(135deg, #F09420 0%, #E8820C 50%, #C6720A 100%);
+  }
+  .royal-gradient {
+    background: linear-gradient(135deg, #795900 0%, #D4A843 50%, #5C4300 100%);
+  }
+
+  /* --- Premium Accent Buttons --- */
+  .btn-accent-premium {
+    background: linear-gradient(135deg, #F09420 0%, #E8820C 50%, #C6720A 100%);
+    box-shadow: 
+      0 4px 15px rgba(232, 130, 12, 0.4),
+      inset 0 1px 1px rgba(255, 255, 255, 0.3),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
+    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .btn-accent-premium::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transition: 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .btn-accent-premium:hover {
+    box-shadow: 0 10px 25px rgba(232, 130, 12, 0.5);
+    transform: translateY(-2px) scale(1.02);
+  }
+
+  .btn-accent-premium:hover::before {
+    left: 100%;
+  }
+
+  .btn-accent-premium:active {
+    transform: translateY(1px) scale(0.98);
+  }
+
+  /* --- Premium Glass Button --- */
+  .btn-accent-glass {
+    background: rgba(232, 130, 12, 0.15);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    color: white;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .btn-accent-glass:hover {
+    background: rgba(232, 130, 12, 0.25);
+    border-color: rgba(232, 130, 12, 0.4);
+    box-shadow: 0 8px 25px rgba(232, 130, 12, 0.2);
+    transform: translateY(-2px);
+  }
+
+  .btn-accent-glass:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  /* Glass Login Container */
+  .glass-login-container {
+    backdrop-filter: blur(15px);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 25px 45px rgba(0, 0, 0, 0.3);
+    border-radius: 20px;
+  }
+
+  /* Floating Label Group */
+  .floating-group {
+    position: relative;
+    width: 100%;
+  }
+
+  .floating-input {
+    width: 100%;
+    padding: 1.2rem 1.25rem 0.8rem 1.25rem;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    color: white;
+    outline: none;
+    transition: all 0.3s ease;
+    font-size: 1rem;
+  }
+
+  .floating-input:focus {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(232, 130, 12, 0.6);
+    box-shadow: 0 0 15px rgba(232, 130, 12, 0.1);
+  }
+
+  .floating-label {
+    position: absolute;
+    left: 1.25rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: rgba(255, 255, 255, 0.4);
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .floating-input:focus ~ .floating-label,
+  .floating-input:not(:placeholder-shown) ~ .floating-label {
+    top: 0.8rem;
+    font-size: 0.65rem;
+    color: #E8820C;
+    font-weight: bold;
+    opacity: 0.8;
+  }
+
+  /* Glassmorphism — light nav */
+  .glass-nav {
+    background: rgba(247, 250, 253, 0.8);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* Glassmorphism — Amber Citrus Glass (Sidebar) */
+  .glass-sidebar-dark {
+    background: var(--nav-glass-bg);
+    -webkit-backdrop-filter: var(--nav-glass-blur);
+    backdrop-filter: var(--nav-glass-blur);
+  }
+
+  /* Glassmorphism — Topbar (matches sidebar dark style) */
+  .glass-topbar {
+    background: var(--nav-glass-bg);
+    backdrop-filter: var(--nav-glass-blur);
+    -webkit-backdrop-filter: var(--nav-glass-blur);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  /* Glassmorphism — dark card (login) */
+  .glass-card {
+    background: rgba(30, 26, 20, 0.65);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  /* Glassmorphism — warm card (Light Mode) */
+  .glass-card-warm {
+    background: rgba(255, 255, 255, 0.45);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    box-shadow: 0 8px 32px rgba(232, 130, 12, 0.04);
+  }
+
+  /* Glass Login Container — Updated for Warm Minimalist */
+  .glass-login-warm {
+    backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 20px 40px rgba(26, 23, 16, 0.05);
+    border-radius: 24px;
+  }
+
+  /* Thai star pattern overlay */
+  .thai-pattern-overlay {
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 0l5 15h15l-12 9 5 15-13-10-13 10 5-15-12-9h15z' fill='%23d4a017' fill-opacity='0.08' fill-rule='evenodd'/%3E%3C/svg%3E");
+  }
+
+  /* Entrance animation */
+  .animate-entrance {
+    animation: fadeSlideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+  .delay-1 { animation-delay: 0.1s; }
+  .delay-2 { animation-delay: 0.2s; }
+  .delay-3 { animation-delay: 0.3s; }
+  .delay-4 { animation-delay: 0.4s; }
+  .delay-5 { animation-delay: 0.5s; }
+
+  /* --- Glass Nav (Updated based on Ref Image: Icon on Top, Label Below) --- */
+  .glass-nav-item {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 16px;
+    border-radius: 16px;
+    transition: all 0.3s ease;
+  }
+
+  .glass-nav-item.active {
+    background: rgba(232, 130, 12, 0.1); /* Low opacity brand tint */
+  }
+
+  .glass-nav-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.025em;
+  }
+
+  /* Persistent Underline Indicator */
+  .glass-nav-indicator {
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%) scaleX(0);
+    width: 24px;
+    height: 4px;
+    background: var(--brand);
+    border-radius: 99px;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    pointer-events: none;
+  }
+
+  .glass-nav-item.active .glass-nav-indicator {
+    transform: translateX(-50%) scaleX(1);
+  }
+
+  /* --- Sidebar "Modern Glass" Refinement --- */
+  .sidebar-tooltip {
+    position: absolute;
+    left: calc(100% + 12px);
+    top: 50%;
+    transform: translateY(-50%) translateX(-10px);
+    background: rgba(26, 23, 16, 0.95);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    z-index: 60;
+  }
+
+  .group:hover .sidebar-tooltip {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+  }
+
+  .nav-label-reveal {
+    opacity: 0;
+    transform: translateX(-12px);
+    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  }
+
+  /* Only reveal labels when sidebar is expanded */
+  .sidebar-expanded .nav-label-reveal {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Hide scrollbar for module tabs */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom scrollbar for main content */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.4) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.4);
+  border-radius: 3px;
+}
+
+/* Dark mode scrollbar */
+.dark .custom-scrollbar {
+  scrollbar-color: rgba(100, 116, 139, 0.4) transparent;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.4);
+}
+
+/* Prevent horizontal overflow on mobile */
+@media (max-width: 767px) {
+  body, html {
+    overflow-x: hidden;
+  }
+}

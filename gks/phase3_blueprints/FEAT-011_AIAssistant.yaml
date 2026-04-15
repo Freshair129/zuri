@@ -1,0 +1,59 @@
+# FEAT-011_AIAssistant.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-011
+  name: "AI Assistant (NL2SQL & Intent Router)"
+  module: "MOD-AI"
+  status: "stable"
+  version: "1.2.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--ai-assistant-core.md"
+
+architectural_pattern:
+  pattern: "Context-Aware Intent Router"
+  infrastructure:
+    ai_engine: "Gemini 2.0 Flash (Function calling & Vision for Slips)"
+    queue: "QStash (Async execution for high-latency AI calls)"
+  routing: "AI Router Middleware (Categorize Intent -> Delegate to Handler)"
+
+data_logic:
+  nl2sql_pipeline:
+    step_1: "Inject Schema Metadata based on User Role (RBAC)"
+    step_2: "Generate SQL (SELECT only, reject DML)"
+    step_3: "Post-Injection of 'tenant_id' for safety"
+    step_4: "Result Sanitization (Remove blacklisted fields)"
+
+  nl2data_pipeline:
+    step_1: "Parse free-form text into JSON structures"
+    step_2: "Return PendingEntry for User Confirmation"
+    step_3: "Write to DB only upon Positive Confirmation"
+
+api_contracts:
+  - endpoint: "POST /api/ai/chat"
+    payload: { message: "string", channel: "enum", conversationId: "uuid?" }
+    logic: "Route -> Process -> Respond with Reply and optional UI Actions (Confirmation Cards)"
+
+  - endpoint: "POST /api/ai/confirm"
+    payload: { entryId: "uuid", decision: "confirm|cancel" }
+    logic: "Execute DB commit or Discard"
+
+security_matrix:
+  rules:
+    - role: "All"
+      resource: "AI_Chat"
+      can: ["CREATE", "READ"]
+      policy: "Row-Level Scope Injected into SQL"
+    - role: "ADM"
+      resource: "AI_Prompt_Engine"
+      can: ["CONFIGURE"]
+
+geography:
+  tables:
+    - "AIChatHistory"
+    - "AIPendingEntry"
+  handlers:
+    - "src/lib/ai/router.ts"
+    - "src/lib/ai/handlers/nl2sql.ts"
+    - "src/lib/ai/handlers/nl2data.ts"

@@ -1,0 +1,10 @@
+Set-Location E:\zuri
+"=== Working Dir ===" | Tee-Object -FilePath "E:\zuri\scripts\debug.log"
+Get-Location | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+"=== Node ===" | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+(node --version) 2>&1 | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+"=== Doppler ===" | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+(doppler --version) 2>&1 | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+"=== ENV ===" | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+($env:PATH) 2>&1 | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"
+"DONE" | Tee-Object -Append -FilePath "E:\zuri\scripts\debug.log"

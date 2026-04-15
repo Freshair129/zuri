@@ -1,0 +1,72 @@
+# FEAT-004_Inbox.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-004
+  name: "Unified Inbox & Pipeline System"
+  module: "MOD-INBOX"
+  status: "stable"
+  version: "1.1.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--inbox.md"
+
+architectural_pattern:
+  pattern: "Event-Driven Omni-Channel Inbox"
+  infrastructure:
+    queue: "QStash (Async Processing)"
+    realtime: "Pusher (Private Channels)"
+    cache: "Redis (In-flight & List Cache)"
+  repositories:
+    - "src/repositories/conversation.repo.ts"
+    - "src/repositories/message.repo.ts"
+
+data_logic:
+  webhook_lifecycle:
+    step_1: "Immediate 200 OK response to Provider"
+    step_2: "Signature Verification (HMAC-SHA256)"
+    step_3: "Queue Payload for Async Processing"
+    step_4: "Identity Resolution & DB Upsert"
+    step_5: "Broadcast Pusher Event"
+
+  conflict_resolution:
+    strategy: "Redis In-flight Lock"
+    key: "inflight:msg:${platform_msg_id}"
+    ttl: "10s"
+
+  pipeline_flow:
+    mechanism: "Transaction-safe status update"
+    side_effects:
+      - "Log to AuditLog"
+      - "Trigger Workflow (e.g., Auto-reply on stage change)"
+      - "Update Customer Lifecycle Stage (Conditional)"
+
+api_contracts:
+  - endpoint: "POST /api/webhooks/:platform"
+    description: "Multi-platform ingestion point"
+  
+  - endpoint: "POST /api/conversations/:id/reply"
+    payload: { text: "string", files: "uuid[]" }
+    logic: "Route to Platform Messaging API based on Conversation.channel"
+
+  - endpoint: "GET /api/conversations"
+    params: { stage_id: "uuid?", agent_id: "uuid?", search: "string" }
+    optimization: "Redis Cached for first 50 results"
+
+security_matrix:
+  default_policy: "TENANT_ISOLATION_ENFORCED"
+  rules:
+    - role: "SLS/AGT"
+      resource: "Conversation"
+      can: ["READ", "UPDATE"]
+      condition: "Is assigned agent or stage matches queue"
+    - role: "MGR/ADM"
+      resource: "PipelineStage"
+      can: ["CREATE", "READ", "UPDATE", "DELETE"]
+
+verification:
+  automated:
+    - "Test webhook response time < 200ms"
+    - "Test Redis deduplication of repeat webhook hits"
+  manual:
+    - "Verify real-time message bubble appearance without refresh"

@@ -1,0 +1,57 @@
+# FEAT-008_Kitchen.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-008
+  name: "Kitchen & Inventory Management (FEFO)"
+  module: "MOD-KITCHEN"
+  status: "stable"
+  version: "1.1.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--kitchen-onsite.md"
+
+architectural_pattern:
+  pattern: "FEFO-Driven Stock Management"
+  storage: "Relational DB with denormalized currentStock"
+  caching: "Redis (Ingredient List & Expiring Items)"
+
+data_logic:
+  fefo_deduction:
+    trigger: "Course Session Consumption or POS Void/Completion"
+    logic:
+      - "Fetch IngredientLots ordered by expiresAt (ASC)"
+      - "Exclude expired lots"
+      - "Recursive deduction across lots until target qty met"
+    consistency: "Wrap in Prisma transaction to ensure denormalized current_stock sync"
+
+  goods_receipt:
+    logic: "Create new IngredientLot with received_qty == remaining_qty"
+
+api_contracts:
+  - endpoint: "POST /api/kitchen/lots"
+    payload: { ingredientId: "uuid", qty: "decimal", cost: "decimal", expiresAt: "datetime" }
+    logic: "Add lot and increment Ingredient.current_stock"
+
+  - endpoint: "GET /api/kitchen/expiring"
+    params: { days_threshold: "int" }
+    query: "IngredientLot where expiresAt < now + threshold"
+
+security_matrix:
+  rules:
+    - role: "STF"
+      resource: "Inventory"
+      can: ["READ", "DEDUCT"]
+    - role: "ADM"
+      resource: "Costing"
+      can: ["READ", "UPDATE"]
+
+geography:
+  tables:
+    - "Ingredient"
+    - "IngredientLot"
+    - "Recipe"
+    - "RecipeItem"
+  repositories:
+    - "src/repositories/ingredient.repo.ts"
+    - "src/repositories/stock.repo.ts"

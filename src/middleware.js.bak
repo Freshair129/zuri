@@ -1,0 +1,217 @@
+// Created At: 2026-04-10 03:30:00 +07:00 (v2.0.0)
+// Previous version: 2026-04-10 05:10:00 +07:00 (v3.1.0)
+// Last Updated: 2026-04-10 03:30:00 +07:00 (v3.2.0)
+import { NextResponse } from 'next/server'
+import { getToken } from 'next-auth/jwt'
+import { can, checkRateLimit } from '@/lib/middleware-safe-utils'
+
+const ZURI_ROOT_DOMAIN = 'zuri.app'
+const LANDING_HOST = 'zuri.app'
+const WWW_HOST = `www.${ZURI_ROOT_DOMAIN}`
+const ADMIN_HOST = `app.${ZURI_ROOT_DOMAIN}`
+
+// Page-level RBAC: routes that require more than just authentication.
+// Ordered most-specific first. Roles are normalized (MANAGER not MGR).
+const PAGE_ACL = [
+  { prefix: '/audit',                       domain: 'audit',      action: 'R' }, // ZDEV-TSK-20260410-026
+  { prefix: '/employees',                   domain: 'employees',  action: 'R' },
+  { prefix: '/integrations',                domain: 'accounting', action: 'R' },
+  { prefix: '/kitchen',                     domain: 'kitchen',    action: 'R' },
+  { prefix: '/marketing/campaign-tracker',  domain: 'marketing',  action: 'F' }, // ad toggle requires write
+  { prefix: '/marketing',                   domain: 'marketing',  action: 'R' },
+  { prefix: '/tenants',                     domain: 'system',     action: 'F' },
+]
+
+// Legacy role code → normalized role (mirrors auth.js normalizeRole)
+const LEGACY_MAP = {
+  MGR: 'MANAGER', ADM: 'MANAGER', HR: 'MANAGER',
+  SLS: 'SALES',   AGT: 'SALES',   MKT: 'SALES',
+  TEC: 'KITCHEN', PUR: 'KITCHEN', PD:  'KITCHEN',
+  ACC: 'FINANCE',
+  STF: 'STAFF',
+}
+function normalizeRoles(roles) {
+  return (roles ?? []).map(r => {
+    const u = r?.toUpperCase()
+    return LEGACY_MAP[u] ?? u
+  })
+}
+
+/**
+ * Extract tenant slug from host.
+ * Returns null when host is not a zuri.app subdomain (dev / other domains).
+ * 'app' slug is reserved for the admin panel.
+ */
+function extractSubdomain(host) {
+  if (host.endsWith(`.${ZURI_ROOT_DOMAIN}`)) {
+    return host.slice(0, host.length - ZURI_ROOT_DOMAIN.length - 1)
+  }
+  return null
+}
+
+export async function middleware(req) {
+  const { pathname } = req.nextUrl
+  const host = req.headers.get('host') || ''
+
+  // Always skip — Next.js internals and internal API routes
+  if (
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/api/internal') ||
+    pathname === '/favicon.ico'
+  ) {
+    return NextResponse.next()
+  }
+
+  // ── Landing page (zuri.app / www.zuri.app) ──────────────────────────────
+  if (host === LANDING_HOST || host === WWW_HOST) {
+    if (pathname === '/') {
+      const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+      if (token?.tenantSlug) {
+        // Redirect authenticated users to their tenant dashboard
+        return NextResponse.redirect(
+          `https://${token.tenantSlug}.${ZURI_ROOT_DOMAIN}/overview`
+        )
+      }
+    }
+    return NextResponse.next()
+  }
+
+  // ── Admin panel (app.zuri.app) ───────────────────────────────────────────
+  if (host === ADMIN_HOST) {
+    if (pathname.startsWith('/api/auth')) return NextResponse.next()
+
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+    if (!token || !token.roles?.includes('DEV')) {
+      return NextResponse.redirect(new URL('/login', req.url))
+    }
+    const headers = new Headers(req.headers)
+    headers.set('x-admin', 'true')
+    return NextResponse.next({ request: { headers } })
+  }
+
+  // ── Tenant subdomains ({slug}.zuri.app) or local dev ────────────────────
+  const isDevMode = !host.endsWith(`.${ZURI_ROOT_DOMAIN}`)
+  let slug = extractSubdomain(host)
+
+  if (!slug) {
+    // Local dev — use ?tenant= query param or default to 'vschool'
+    slug = req.nextUrl.searchParams.get('tenant') || 'vschool'
+  }
+
+  // Auth routes always pass through (with slug header only)
+  if (pathname.startsWith('/api/auth')) {
+    const headers = new Headers(req.headers)
+    headers.set('x-tenant-slug', slug)
+    return NextResponse.next({ request: { headers } })
+  }
+
+  const token = await getToken({ 
+    req, 
+    secret: process.env.NEXTAUTH_SECRET 
+  })
+
+  // API routes: inject tenant headers + enforce rate limiting
+  if (pathname.startsWith('/api')) {
+    const headers = new Headers(req.headers)
+    if (token?.tenantId) headers.set('x-tenant-id', token.tenantId)
+    headers.set('x-tenant-slug', slug)
+
+    // Rate limiting — authenticated API calls only (skip auth handshake routes)
+    if (token?.tenantId) {
+      const { allowed, limit, remaining, reset } = await checkRateLimit({
+        tenantId: token.tenantId,
+        userId:   token.sub,
+        plan:     token.plan ?? 'FREE',
+      })
+
+      const rlHeaders = {
+        'X-RateLimit-Limit':     String(limit),
+        'X-RateLimit-Remaining': String(remaining),
+        'X-RateLimit-Reset':     String(reset),
+      }
+
+      if (!allowed) {
+        const retryAfter = Math.max(0, reset - Math.floor(Date.now() / 1000))
+        return NextResponse.json(
+          { error: 'Too Many Requests', code: 'RATE_LIMITED' },
+          { status: 429, headers: { ...rlHeaders, 'Retry-After': String(retryAfter) } }
+        )
+      }
+
+      // Propagate rate limit context to downstream handlers
+      headers.set('X-RateLimit-Limit',     String(limit))
+      headers.set('X-RateLimit-Remaining', String(remaining))
+      headers.set('X-RateLimit-Reset',     String(reset))
+    }
+
+    return NextResponse.next({ request: { headers } })
+  }
+
+  // Public page paths — allow unauthenticated access
+  // /          : marketing landing page (authenticated users auto-redirect to /overview)
+  // /onboarding: self-serve tenant signup flow (ZDEV-TSK-20260410-020 / M5 MT-4)
+  const isPublicPath =
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname === '/register' ||
+    pathname === '/onboarding'
+
+  if (isPublicPath) {
+    // Authenticated users on login/register → redirect to dashboard.
+    // Onboarding is skipped here: signed-in users already have a tenant.
+    if (token && pathname !== '/onboarding') {
+      return NextResponse.redirect(new URL('/overview', req.url))
+    }
+    const headers = new Headers(req.headers)
+    headers.set('x-tenant-slug', slug)
+    return NextResponse.next({ request: { headers } })
+  }
+
+  // ── Protected routes ─────────────────────────────────────────────────────
+
+  // 1. Not authenticated → redirect to login
+  if (!token) {
+    const loginUrl = new URL('/login', req.url)
+    loginUrl.searchParams.set('callbackUrl', pathname)
+    return NextResponse.redirect(loginUrl)
+  }
+
+  // 2. Tenant inactive (JWT field — may be up to 5 min stale, acceptable)
+  if (token.isActive === false) {
+    const landingUrl = isDevMode
+      ? new URL('/login?error=tenant_inactive', req.url)
+      : new URL(`https://${ZURI_ROOT_DOMAIN}/?error=tenant_inactive`)
+    return NextResponse.redirect(landingUrl)
+  }
+
+  // 3. Cross-tenant access prevention
+  //    Skip in dev mode (no subdomains on localhost)
+  if (!isDevMode && token.tenantSlug && token.tenantSlug !== slug) {
+    // Redirect user to their own subdomain, preserving the path
+    const correctUrl = new URL(req.url)
+    correctUrl.host = `${token.tenantSlug}.${ZURI_ROOT_DOMAIN}`
+    return NextResponse.redirect(correctUrl)
+  }
+
+  // 4. Page-level RBAC — check domain permission for restricted pages
+  const pageAcl = PAGE_ACL.find(({ prefix }) => pathname.startsWith(prefix))
+  if (pageAcl) {
+    const normalizedRoles = normalizeRoles(token.roles)
+    if (!can(normalizedRoles, pageAcl.domain, pageAcl.action)) {
+      return NextResponse.redirect(new URL('/overview?error=forbidden', req.url))
+    }
+  }
+
+  // Inject tenant context for downstream route handlers
+  const headers = new Headers(req.headers)
+  if (token.tenantId) {
+    headers.set('x-tenant-id', token.tenantId)
+  }
+  headers.set('x-tenant-slug', slug)
+
+  return NextResponse.next({ request: { headers } })
+}
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+}

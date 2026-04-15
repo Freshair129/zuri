@@ -1,0 +1,73 @@
+# FEAT-005_CRM.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-005
+  name: "CRM, Funnel & Automation Engine"
+  module: "MOD-CRM"
+  status: "stable"
+  version: "1.0.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--crm-core.md"
+
+architectural_pattern:
+  pattern: "Customer 360 & Automation Hub"
+  infrastructure:
+    queue: "QStash (Batch Automation & Background Processing)"
+    cache: "Redis (List Cache: 60s TTL)"
+    search: "Full-Text Search (ILike with Debounce)"
+  repositories:
+    - "src/lib/repositories/customer.repo.ts"
+
+data_logic:
+  identity_resolution_hook:
+    trigger: "Before Customer Create/Update"
+    action: "E.164 normalization + phone-based deduplication"
+    locking: "Prisma Transactional integrity enforced"
+
+  automation_engine:
+    structure: "Trigger -> Condition -> Action (TCA)"
+    worker: "src/app/api/workers/automation-check.ts"
+    safety:
+      governance: "1 trigger per customer per 24h cooldown"
+      idempotency: "Log unique execution IDs in automation_logs"
+
+  segmentation:
+    logic: "Smart Dynamic Query based on JSON rules"
+    fields: [lifecycle_stage, total_spend, tags, last_contact]
+
+api_contracts:
+  - endpoint: "GET /api/customers"
+    params: { search: "string", stage: "enum", tags: "uuid[]" }
+    optimization: "Redis cache: crm:list:[tenantId]:[filters_hash]"
+
+  - endpoint: "POST /api/customers/import"
+    mode: "Background"
+    pipeline: "Validate -> Enqueue Job -> Pusher Notification"
+
+  - endpoint: "POST /api/customers/:id/merge"
+    payload: { secondaryId: "uuid" }
+    logic: "Merge all related identities, conversations, and transaction records to Primary"
+
+security_matrix:
+  rules:
+    - role: "SLS/AGT"
+      resource: "Customer"
+      can: ["READ", "UPDATE"]
+      condition: "IsOwner (assigned_agent_id == current_user_id)"
+    - role: "MGR/ADM"
+      resource: "Customer"
+      can: ["READ", "UPDATE", "DELETE", "IMPORT", "EXPORT"]
+      condition: "Global Tenant Access"
+
+geography:
+  tables:
+    - "Customer"
+    - "CustomerIdentity"
+    - "CustomerActivity"
+    - "CustomerTag"
+    - "CustomerSegment"
+  hooks:
+    - "src/hooks/useCRM.ts"
+    - "src/middleware/automationGuard.ts"

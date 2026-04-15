@@ -1,0 +1,116 @@
+# Created At: 2026-04-10 03:52:00 +07:00 (v1.0.5)
+# Previous version: 2026-04-12 12:15:00 +07:00 (v1.2.0)
+# Last Updated: 2026-04-15 08:30:00 +07:00 (v1.3.0)
+# Changes: Added MSP-AGT-EVA-COWORK, fixed RWANG empty description
+
+id_naming_conventions:
+  - category: Process Identifiers
+    description: ID สำหรับการจัดการโครงการและกระบวนการพัฒนา (Meta-data)
+    prefix: MSP- # Memory&Soul Passport
+    formats:
+      - name: Implementation Plan ID
+        format: MSP-IMP-[YYMMDD][SERIAL]
+        example: MSP-IMP-260415001
+        path: zuri/gks/14_devlog/implement/
+        description: รหัสแผนการทางเทคนิคระดับโมดูล
+        registry:
+          MSP-IMP-260415001: Obsidian Second Brain — Multi-Agent Context System # ตัวอย่าง
+
+      - name: Task ID
+        format: MSP-TSK-[YYMMDD][IMPSERIAL]-[SERIAL]
+        example: MSP-TSK-260415001-001
+        path: zuri/gks/14_devlog/tasks/
+        description: รหัสงานย่อยรายวัน/รายเซสชัน — ต้องสร้าง Task Log ทุกครั้ง
+        registry:
+          MSP-TSK-260415001-001: Emergency Revert & Stabilization  # ตัวอย่าง
+
+      - name: Action ID (Audit)
+        format: MSP-ACT-[YYMMDD][TSKSERIAL]-[SERIAL]
+        example: MSP-ACT-260415001-001
+        description: รหัสการกระทำรายบรรทัด (C/R/U/D) ภายใน Task
+        registry:
+          MSP-ACT-260415001-001: Emergency Revert & Stabilization  # ตัวอย่าง
+
+      - name: Walkthrough ID
+        format: MSP-WALK-[YYMMDD][TSKSERIAL]-[SERIAL]
+        example: MSP-WALK-260415001-001
+        description: "รหัสเฟสของโครงการ (เช่น Phase 1: Foundation)"
+        path: zuri/gks/14_devlog/walkthrough/
+        registry:
+          MSP-WALK-260415001-001: Emergency Revert & Stabilization  # ตัวอย่าง
+
+  - category: Review & Quality Identifiers
+    formats:
+      - name: Incident ID
+        format: MSP-INC-[YYMMDD][TSKSERIAL]-[SERIAL]
+        example: MSP-INC-260415001-001
+        description: รหัสการวิเคราะห์ปัญหาหลังเกิดเหตุ (Post-mortem)
+        registry:
+          MSP-INC-260415001-001: .eva/devlog/incidents/MSP-INC-260412-003.md (Persistent Middleware Invocation Failure) # ตัวอย่าง
+      - name: Review ID
+        format: MSP-REV-[YYMMDD][TSKSERIAL]-[SERIAL]
+        example: MSP-REV-260415001-001
+        description: รหัสการตรวจสอบคุณภาพงาน
+        registry:
+          MSP-REV-260415001-001: .eva/devlog/reviews/MSP-REV-260415001-001.md (Persistent Middleware Invocation Failure) # ตัวอย่าง
+      - name: Feedback ID
+        format: MSP-FBK-[YYMMDD][TSKSERIAL]-[SERIAL]
+        example: MSP-FBK-260415001-001
+        description: รหัสข้อเสนอแนะจากการตรวจสอบ
+        registry:
+          MSP-FBK-260415001-001: .eva/devlog/feedbacks/MSP-FBK-260415001-001.md (Persistent Middleware Invocation Failure) # ตัวอย่าง
+      - name: Attachment ID
+        format: MSP-ATT-[YYMMDD][TSKSERIAL]-[SERIAL]
+        example: MSP-ATT-260415001-001
+        description: รหัสไฟล์แนบประกอบเอกสาร Audit (เช่น รูปภาพ, log file)
+        registry:
+          MSP-ATT-260415001-001: .eva/devlog/attachments/MSP-ATT-260415001-001.md (Persistent Middleware Invocation Failure) # ตัวอย่าง
+          
+  - category: Identity Identifiers
+    formats:
+      - name: Responder ID (User)
+        format: MSP-USR-[NAME]
+        example: MSP-USR-BOSS
+        description: ID สำหรับมนุษย์ผู้สั่งการหรือตรวจงาน
+      - name: Agent ID (AI)
+        format: MSP-AGT-[CODENAME]-[PLATFORM]
+        example: MSP-AGT-ANTIGRAVITY-GEMINI
+        description: |
+          ID สำหรับ AI Agent แต่ละตัว — ต้องไม่ซ้ำกันแม้ใช้ provider เดียวกัน
+          CODENAME: ชื่อเฉพาะของ agent (ตั้งใน CLAUDE.local.md ของแต่ละ dev)
+          PLATFORM: ANTIGRAVITY | GEMINI-CLI | CLAUDE-COWORK | CLAUDE-CODE
+        naming_rule: |
+          ห้ามใช้ชื่อ platform อย่างเดียว (MSP-AGT-CLAUDE ไม่ได้)
+          ต้องมี CODENAME ระบุ dev/role ด้วยเสมอ
+          CODENAME ต้องลงทะเบียนที่นี่ก่อนใช้งาน
+        registry:
+          # ── Antigravity IDE Agent ─────────────────────
+          MSP-AGT-RWANG-IDE:
+            codename: RWANG/อาหวัง
+            platform: "Antigravity IDE (Multi-model: Gemini 3 Flash/Pro, Sonnet 4.6, Opus 4.6, GPT-OSS 120B)"
+            default_model: gemini-3-flash
+            owner: MSP-USR-BOSS
+            role: Primary Implementer — feature builds, bug fixes, doc updates
+            quota_tiers:
+              flash_3:  "Main workhorse — resets every 5h, practically unlimited"
+              pro_3:    "Moderate — resets 5h but has weekly cap, use when Flash insufficient"
+              sonnet_opus_gpt: "Shared pool, very limited — emergency only"
+            accepts_commands_from: [MSP-USR-BOSS, MSP-AGT-EVA-CLAUDE-COWORK]
+            instructions: "D:/zuri/GEMINI.md"
+            description: >
+              Antigravity IDE agent สำหรับ implement features, fix bugs, และ update docs
+              ใช้ Gemini 3 Flash เป็นหลัก สลับ Pro/Sonnet/Opus ตามความจำเป็น
+
+          # ── Claude Cowork Agent ───────────────────────
+          MSP-AGT-EVA-COWORK:
+            codename: EVA/อีวา
+            platform: "Claude Cowork (Opus 4.6)"
+            default_model: claude-opus-4-6
+            owner: MSP-USR-BOSS
+            role: Lead Dev & Architect — planning, KB management, gap analysis, blueprints, code review
+            accepts_commands_from: [MSP-USR-BOSS]
+            instructions: "D:/zuri/CLAUDE.md"
+            description: >
+              Lead architect agent ดูแล Knowledge Base (GKS), วิเคราะห์ PRD,
+              ออกแบบ architecture, review code, และสร้าง implementation plans
+              ทำงานผ่าน Claude Cowork desktop app

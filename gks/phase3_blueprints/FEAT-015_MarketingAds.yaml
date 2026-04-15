@@ -1,0 +1,102 @@
+# FEAT-015_MarketingAds.yaml
+# Spec Reference: FEAT09-MARKETING.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-015
+  spec_id: FEAT09
+  name: "Marketing & Meta Ads Analytics"
+  module: "MOD-MARKETING"
+  status: "stable"
+  version: "1.0.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT09-MARKETING.md"
+  depends_on: ["FEAT-001_MultiTenant", "FEAT-004_Inbox"]
+
+architectural_pattern:
+  pattern: "Scheduled Data Pipeline + Redis-Cached Dashboard"
+  sync: "QStash cron — hourly Meta Graph API ingestion"
+  caching: "Redis (dashboard KPIs: 300s TTL)"
+  attribution: "First-touch: firstTouchAdId on Conversation model"
+  realtime: "None (refresh on demand)"
+
+data_logic:
+  meta_sync_pipeline:
+    schedule: "QStash cron — every hour"
+    flow:
+      - "Fetch AdAccount insights from Meta Graph API v18"
+      - "Upsert AdDailyMetric, AdDailyDemographic, AdDailyPlacement"
+      - "Update AdLiveStatus (budget, delivery status)"
+      - "Trigger attribution recalculation"
+    rate_limit: "Meta API 200 calls/hour — batch campaigns"
+
+  revenue_attribution:
+    model: "First-touch"
+    link: "Conversation.firstTouchAdId → Order.customerId"
+    calculation: "SUM(orders) WHERE customer.firstTouchAdId = adId AND order.createdAt WITHIN 30 days"
+    field: "ADR-039"
+
+  kpi_aggregation:
+    fields: [spend, impressions, clicks, ctr, cpc, roas, revenue, conversions]
+    grouping: [campaign, adset, ad, date, demographic, placement]
+    cache_key: "mkt:dashboard:{tenantId}:{dateRange}"
+
+api_contracts:
+  - endpoint: "GET /api/marketing/dashboard"
+    description: "Executive KPI summary (ROAS, spend, revenue, impressions)"
+    params: { dateFrom: "date", dateTo: "date" }
+    cache: "Redis 300s"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/marketing/campaigns"
+    description: "Campaign list with performance drill-down"
+    params: { adAccountId: "uuid?", status: "string?" }
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/marketing/ads-audit"
+    description: "AI audit of underperforming ads"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/marketing/ad-timeline"
+    description: "24×7 hourly heatmap data"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/workers/sync-hourly"
+    description: "QStash-triggered Meta Graph API sync worker"
+    auth: "QStash signature"
+    logic: "Per-tenant: fetch insights → upsert metrics → cache bust"
+
+security_matrix:
+  rules:
+    - role: "MGR/ADM"
+      resource: "MarketingDashboard"
+      can: ["READ", "EXPORT"]
+    - role: "STF/SLS"
+      resource: "MarketingDashboard"
+      can: []
+      note: "No access — revenue data is sensitive"
+
+geography:
+  tables:
+    - "AdAccount"
+    - "Campaign"
+    - "AdSet"
+    - "Ad"
+    - "AdDailyMetric"
+    - "AdDailyDemographic"
+    - "AdDailyPlacement"
+    - "AdLiveStatus"
+  pages:
+    - "src/app/(dashboard)/marketing/page.jsx"
+    - "src/app/(dashboard)/marketing/campaigns/page.jsx"
+    - "src/app/(dashboard)/marketing/ads-audit/page.jsx"
+    - "src/app/(dashboard)/marketing/daily-brief/page.jsx"
+  components:
+    - "src/components/marketing/CampaignTable.jsx"
+    - "src/components/marketing/MetricCard.jsx"
+    - "src/components/marketing/ROASChart.jsx"
+  api_routes:
+    - "src/app/api/marketing/dashboard/route.js"
+    - "src/app/api/marketing/campaigns/route.js"
+    - "src/app/api/marketing/ads-audit/route.js"
+    - "src/app/api/workers/sync-hourly/route.js"

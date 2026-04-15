@@ -1,0 +1,58 @@
+# FEAT-010_DailyBrief.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-010
+  name: "Daily Sales Brief (DSB)"
+  module: "MOD-ANALYTICS"
+  status: "stable"
+  version: "1.0.1"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--daily-brief.md"
+
+architectural_pattern:
+  pattern: "AI-Driven Scheduled Business Intelligence"
+  infrastructure:
+    scheduler: "QStash (Cron jobs at 00:05 and 08:00)"
+    ai_service: "Gemini 2.0 Flash (Streaming Analysis)"
+  repositories:
+    - "src/repositories/analytics.repo.ts"
+
+data_logic:
+  analysis_pipeline:
+    trigger: "00:05 ICT (Nightly)"
+    logic:
+      - "Aggregate yesterday's data (Orders, Conversations, Enrolments)"
+      - "Gemini Analysis of Conversation sentiment & purchase intent"
+      - "Store summary in DailyBrief table"
+  
+  notification_pipeline:
+    trigger: "08:00 ICT (Executive Alert)"
+    action: "Send LINE Flex Message via Messaging API to Owner"
+
+api_contracts:
+  - endpoint: "GET /api/analytics/daily-brief"
+    params: { date: "string" }
+    returns: "JSON structure of metrics, summary, and hot leads"
+
+  - endpoint: "POST /api/workers/daily-brief/process"
+    security: "QStash signature required"
+    logic: "Perform Batch AI Analysis"
+
+security_matrix:
+  rules:
+    - role: "OWNER/MGR"
+      resource: "DailyBrief"
+      can: ["READ"]
+    - role: "System"
+      resource: "DailyBrief"
+      can: ["CREATE"]
+
+geography:
+  tables:
+    - "DailyBrief"
+    - "ConversationAnalysis"
+  workers:
+    - "src/app/api/workers/daily-brief/process.ts"
+    - "src/app/api/workers/daily-brief/notify.ts"

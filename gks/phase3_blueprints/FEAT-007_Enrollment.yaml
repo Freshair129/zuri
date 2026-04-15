@@ -1,0 +1,61 @@
+# FEAT-007_Enrollment.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-007
+  name: "Enrollment & Automated Certification"
+  module: "MOD-ENROLLMENT"
+  status: "stable"
+  version: "1.1.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--certification-logic.md"
+
+architectural_pattern:
+  pattern: "Milestone-Driven Learning Engine"
+  infrastructure:
+    queue: "QStash (Nightly Batch processing)"
+    realtime: "Pusher (Attendance confirm notifications)"
+  repositories:
+    - "src/repositories/enrollment.repo.ts"
+    - "src/repositories/certificate.repo.ts"
+
+data_logic:
+  certification_pipeline:
+    trigger: "Cron Job (Every night 23:00)"
+    logic:
+      - "Fetch all IN_PROGRESS enrollments"
+      - "Filter by hoursCompleted >= [30, 111, 201]"
+      - "Exclude already issued tier in Certificate table"
+      - "Generate Certificate Record + PDF Template"
+      - "Upload to Storage"
+    notification: "Push LINE message to student"
+
+  attendance_checkin:
+    security: "Dynamic QR with TTL (15 mins)"
+    logic: "Atomic increment of hoursCompleted and record Attendance entry"
+
+api_contracts:
+  - endpoint: "POST /api/attendance/check-in"
+    payload: { qrToken: "string", customerId: "uuid" }
+    logic: "Validate token -> Increment enrollment hours -> Notify staff"
+
+  - endpoint: "GET /api/certificates/:id/pdf"
+    logic: "Signed URL redirect to storage bucket"
+
+security_matrix:
+  rules:
+    - role: "STF"
+      resource: "Attendance"
+      can: ["CREATE"]
+    - role: "ADM"
+      resource: "Certificate"
+      can: ["ISSUE", "VOID"]
+
+geography:
+  tables:
+    - "Enrollment"
+    - "Attendance"
+    - "Certificate"
+  workers:
+    - "/api/workers/check-completion"

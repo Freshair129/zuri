@@ -1,0 +1,382 @@
+# FEAT-012_POSDelivery.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-012
+  name: "POS Delivery — Zone Management, Driver Assignment & Tracking"
+  module: "MOD-POS"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "gks/02_features/FEAT--pos-delivery.md"
+  depends_on: ["FEAT-006_POS", "FEAT-003_Billing", "FEAT-002_CustomerProfile"]
+
+# ──────────────────────────────────────────────
+# OVERVIEW
+# ──────────────────────────────────────────────
+# Manages the full delivery lifecycle for POS orders.
+# Three delivery subtypes already defined in constants:
+#   - DELIVERY_INSTANT  (LineMan / Grab / self-fleet)
+#   - DELIVERY_POSTAL   (Parcel service)
+#   - DELIVERY_COLD     (Temperature-controlled logistics)
+#
+# Existing code: Order model supports orderType=DELIVERY,
+#   deliverySubtype field, basic mobile page selection UI.
+# Gap: zone mgmt, address validation, driver assignment,
+#   tracking, fee calculation, partner API integrations.
+
+architectural_pattern:
+  pattern: "Event-Driven Delivery Pipeline"
+  realtime: "Pusher (delivery-status channel per order)"
+  queue: "QStash (driver assignment retry, status polling)"
+  caching: "Redis (delivery zone polygons: 300s TTL)"
+  geocoding: "Google Maps Geocoding API (address → lat/lng)"
+
+# ──────────────────────────────────────────────
+# DATA MODEL (New Prisma Models)
+# ──────────────────────────────────────────────
+data_model:
+  DeliveryZone:
+    fields:
+      id: "uuid @default(cuid())"
+      tenantId: "String"
+      name: "String"
+      polygon: "Json"          # GeoJSON polygon coordinates
+      baseFee: "Decimal"
+      perKmFee: "Decimal"
+      minOrderAmount: "Decimal"
+      maxRadius_km: "Float"
+      isActive: "Boolean @default(true)"
+      createdAt: "DateTime @default(now())"
+    indexes: ["@@index([tenantId])"]
+
+  DeliveryDriver:
+    fields:
+      id: "uuid @default(cuid())"
+      tenantId: "String"
+      name: "String"
+      phone: "String"          # E.164 format
+      vehicleType: "String"    # MOTORCYCLE, CAR, BICYCLE
+      status: "DriverStatus"   # AVAILABLE, BUSY, OFFLINE
+      currentLat: "Float?"
+      currentLng: "Float?"
+      isExternal: "Boolean @default(false)"  # true = 3rd party (LineMan/Grab)
+      externalProvider: "String?"
+      createdAt: "DateTime @default(now())"
+    indexes: ["@@index([tenantId, status])"]
+
+  DeliveryOrder:
+    fields:
+      id: "uuid @default(cuid())"
+      tenantId: "String"
+      orderId: "String @unique"  # FK to Order
+      driverId: "String?"        # FK to DeliveryDriver (null = unassigned)
+      deliverySubtype: "DeliverySubtype"
+      status: "DeliveryStatus"
+      # Address
+      recipientName: "String"
+      recipientPhone: "String"
+      addressLine: "String"
+      district: "String?"
+      province: "String?"
+      postalCode: "String?"
+      lat: "Float?"
+      lng: "Float?"
+      # Logistics
+      deliveryFee: "Decimal"
+      zoneId: "String?"
+      estimatedMinutes: "Int?"
+      scheduledAt: "DateTime?"   # null = ASAP
+      # Tracking
+      pickedUpAt: "DateTime?"
+      deliveredAt: "DateTime?"
+      proofImageUrl: "String?"
+      failureReason: "String?"
+      # External
+      externalTrackingId: "String?"
+      externalProvider: "String?"
+    indexes: ["@@index([tenantId, status])", "@@index([driverId])"]
+
+  enums:
+    DeliveryStatus: "PENDING → CONFIRMED → PREPARING → READY_FOR_PICKUP → DISPATCHED → DELIVERED → FAILED → CANCELLED"
+    DeliverySubtype: "DELIVERY_INSTANT | DELIVERY_POSTAL | DELIVERY_COLD"
+    DriverStatus: "AVAILABLE | BUSY | OFFLINE"
+
+# ──────────────────────────────────────────────
+# DATA LOGIC
+# ──────────────────────────────────────────────
+data_logic:
+  address_resolution:
+    input: "Free-text Thai address or Google Place ID"
+    pipeline:
+      - "Parse Thai address components (ตำบล/อำเภอ/จังหวัด)"
+      - "Geocode via Google Maps → lat/lng"
+      - "Point-in-polygon test against DeliveryZones"
+      - "Calculate distance from store → delivery fee"
+    fallback: "If no zone match → reject or apply max-radius fee"
+
+  fee_calculation:
+    formula: "baseFee + (distance_km * perKmFee)"
+    modifiers:
+      - "DELIVERY_COLD: +30% surcharge"
+      - "DELIVERY_POSTAL: flat rate from carrier API"
+      - "Free delivery if order >= zone.minOrderAmount"
+    rounding: "Round up to nearest ฿1"
+
+  driver_assignment:
+    strategy: "Nearest Available Driver"
+    algorithm:
+      - "Filter drivers: status=AVAILABLE, vehicleType compatible"
+      - "Sort by Haversine distance to store"
+      - "Assign first available"
+      - "If no driver → queue for retry (QStash, 60s interval, max 5)"
+    external_fallback:
+      trigger: "No self-fleet driver available after 3 retries"
+      action: "Dispatch to LineMan/Grab API"
+
+  order_lifecycle:
+    states:
+      PENDING: "Order placed, awaiting confirmation"
+      CONFIRMED: "Store accepted, preparing"
+      PREPARING: "Kitchen working on order"
+      READY_FOR_PICKUP: "Food ready, waiting for driver"
+      DISPATCHED: "Driver picked up, en route"
+      DELIVERED: "Proof of delivery received"
+      FAILED: "Delivery failed (address wrong, customer unavailable)"
+      CANCELLED: "Cancelled by customer or store"
+    transitions:
+      - from: "PENDING"
+        to: ["CONFIRMED", "CANCELLED"]
+        actor: "STAFF"
+      - from: "CONFIRMED"
+        to: ["PREPARING", "CANCELLED"]
+        actor: "SYSTEM/STAFF"
+      - from: "PREPARING"
+        to: ["READY_FOR_PICKUP"]
+        actor: "KITCHEN"
+      - from: "READY_FOR_PICKUP"
+        to: ["DISPATCHED"]
+        actor: "DRIVER/SYSTEM"
+      - from: "DISPATCHED"
+        to: ["DELIVERED", "FAILED"]
+        actor: "DRIVER"
+    pusher_events:
+      channel: "tenant:{tenantId}:delivery:{orderId}"
+      events: ["status_changed", "driver_assigned", "location_updated"]
+
+  customer_notification:
+    channels: ["LINE", "FB_MESSENGER", "SMS"]
+    triggers:
+      - event: "CONFIRMED"
+        message: "Your order #{orderId} is confirmed! Estimated {estimatedMinutes} min."
+      - event: "DISPATCHED"
+        message: "Your order is on the way! Driver: {driverName}, Tel: {driverPhone}"
+      - event: "DELIVERED"
+        message: "Your order has been delivered. Thank you!"
+
+# ──────────────────────────────────────────────
+# API CONTRACTS
+# ──────────────────────────────────────────────
+api_contracts:
+  # --- Zone Management (Admin) ---
+  - endpoint: "GET /api/pos/delivery/zones"
+    description: "List delivery zones for tenant"
+    params: { active_only: "boolean?" }
+    returns: "DeliveryZone[]"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/pos/delivery/zones"
+    description: "Create delivery zone with polygon"
+    payload: { name: "string", polygon: "GeoJSON", baseFee: "number", perKmFee: "number", minOrderAmount: "number" }
+    auth: "ADM"
+
+  - endpoint: "PUT /api/pos/delivery/zones/{id}"
+    description: "Update zone config"
+    auth: "ADM"
+
+  # --- Driver Management ---
+  - endpoint: "GET /api/pos/delivery/drivers"
+    description: "List drivers with current status"
+    params: { status: "DriverStatus?" }
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/pos/delivery/drivers"
+    description: "Register new driver"
+    payload: { name: "string", phone: "string", vehicleType: "string" }
+    auth: "MGR/ADM"
+
+  - endpoint: "PUT /api/pos/delivery/drivers/{id}/status"
+    description: "Toggle driver availability"
+    payload: { status: "DriverStatus", lat: "float?", lng: "float?" }
+    auth: "DRIVER/MGR"
+
+  # --- Delivery Orders ---
+  - endpoint: "POST /api/pos/delivery/orders"
+    description: "Create delivery order linked to POS order"
+    payload:
+      orderId: "uuid"
+      recipientName: "string"
+      recipientPhone: "string"
+      addressLine: "string"
+      district: "string?"
+      province: "string?"
+      postalCode: "string?"
+      deliverySubtype: "DeliverySubtype"
+      scheduledAt: "datetime?"
+    side_effects:
+      - "Geocode address → zone lookup → fee calculation"
+      - "Auto-assign driver (if DELIVERY_INSTANT)"
+      - "Pusher: delivery created event"
+    auth: "SLS/STF"
+
+  - endpoint: "PUT /api/pos/delivery/orders/{id}/status"
+    description: "Update delivery status (state machine enforced)"
+    payload: { status: "DeliveryStatus", proofImageUrl: "string?", failureReason: "string?" }
+    validation: "Only valid transitions allowed"
+    side_effects:
+      - "Customer notification via LINE/FB"
+      - "Pusher: status_changed event"
+    auth: "DRIVER/STF"
+
+  - endpoint: "GET /api/pos/delivery/orders/{id}/track"
+    description: "Public tracking page data"
+    returns: "{ status, driverName, estimatedMinutes, lat, lng }"
+    auth: "Public (order token required)"
+
+  # --- Fee Estimation ---
+  - endpoint: "POST /api/pos/delivery/estimate"
+    description: "Calculate delivery fee before order confirmation"
+    payload: { addressLine: "string", deliverySubtype: "string" }
+    returns: "{ fee: number, zone: string, estimatedMinutes: number, available: boolean }"
+    auth: "SLS/STF/PUBLIC"
+
+# ──────────────────────────────────────────────
+# EXTERNAL INTEGRATIONS
+# ──────────────────────────────────────────────
+external_integrations:
+  google_maps:
+    purpose: "Address geocoding + distance calculation"
+    api: "Geocoding API + Distance Matrix API"
+    rate_limit: "50 req/s"
+    caching: "Redis — geo:{address_hash} — 24h TTL"
+
+  lineman:
+    purpose: "External delivery dispatch (instant)"
+    integration_type: "REST API"
+    flow: "Create order → poll status → webhook callback"
+    webhook: "POST /api/webhooks/lineman"
+
+  grab:
+    purpose: "Alternative external delivery"
+    integration_type: "REST API"
+    flow: "Same as LineMan adapter pattern"
+
+  thailand_post:
+    purpose: "Parcel delivery (DELIVERY_POSTAL)"
+    integration_type: "REST API"
+    tracking: "Tracking number → poll status page"
+
+# ──────────────────────────────────────────────
+# SECURITY MATRIX
+# ──────────────────────────────────────────────
+security_matrix:
+  rules:
+    - role: "SLS/STF"
+      resource: "DeliveryOrder"
+      can: ["CREATE", "READ", "UPDATE"]
+    - role: "DRIVER"
+      resource: "DeliveryOrder"
+      can: ["READ", "UPDATE_STATUS"]
+      condition: "Assigned driver only"
+    - role: "MGR/ADM"
+      resource: "DeliveryZone"
+      can: ["CREATE", "READ", "UPDATE", "DELETE"]
+    - role: "MGR/ADM"
+      resource: "DeliveryDriver"
+      can: ["CREATE", "READ", "UPDATE", "DELETE"]
+    - role: "PUBLIC"
+      resource: "Tracking"
+      can: ["READ"]
+      condition: "Valid order tracking token"
+
+# ──────────────────────────────────────────────
+# GEOGRAPHY (Code Locations)
+# ──────────────────────────────────────────────
+geography:
+  tables:
+    new:
+      - "DeliveryZone"
+      - "DeliveryDriver"
+      - "DeliveryOrder"
+    existing:
+      - "Order"
+      - "OrderItem"
+      - "Customer"
+  pages:
+    new:
+      - "src/app/(dashboard)/pos/delivery/page.jsx"          # Delivery dashboard
+      - "src/app/(dashboard)/pos/delivery/zones/page.jsx"    # Zone management
+      - "src/app/(dashboard)/pos/delivery/drivers/page.jsx"  # Driver management
+      - "src/app/(public)/track/[token]/page.jsx"            # Public tracking
+  components:
+    new:
+      - "src/components/pos/delivery/DeliveryDashboard.jsx"  # Live order board
+      - "src/components/pos/delivery/ZoneEditor.jsx"         # Map polygon editor
+      - "src/components/pos/delivery/DriverList.jsx"         # Driver status board
+      - "src/components/pos/delivery/AddressForm.jsx"        # Address input + geocode
+      - "src/components/pos/delivery/TrackingMap.jsx"        # Public tracking view
+      - "src/components/pos/delivery/FeeEstimator.jsx"       # Fee preview widget
+  api_routes:
+    new:
+      - "src/app/api/pos/delivery/zones/route.js"
+      - "src/app/api/pos/delivery/zones/[id]/route.js"
+      - "src/app/api/pos/delivery/drivers/route.js"
+      - "src/app/api/pos/delivery/drivers/[id]/status/route.js"
+      - "src/app/api/pos/delivery/orders/route.js"
+      - "src/app/api/pos/delivery/orders/[id]/status/route.js"
+      - "src/app/api/pos/delivery/orders/[id]/track/route.js"
+      - "src/app/api/pos/delivery/estimate/route.js"
+      - "src/app/api/webhooks/lineman/route.js"
+  repositories:
+    new:
+      - "src/lib/repositories/deliveryRepo.js"
+      - "src/lib/repositories/deliveryZoneRepo.js"
+      - "src/lib/repositories/deliveryDriverRepo.js"
+
+# ──────────────────────────────────────────────
+# IMPLEMENTATION TASKS
+# ──────────────────────────────────────────────
+implementation_tasks:
+  phase_1_foundation:
+    - "Add DeliveryZone, DeliveryDriver, DeliveryOrder to Prisma schema"
+    - "Run migration: npx prisma migrate dev --name add_delivery_models"
+    - "Create deliveryRepo, deliveryZoneRepo, deliveryDriverRepo"
+    - "Create zone CRUD endpoints"
+    - "Create driver CRUD + status endpoints"
+
+  phase_2_order_flow:
+    - "Create POST /api/pos/delivery/orders with geocoding + fee calc"
+    - "Create PUT status endpoint with state machine validation"
+    - "Implement driver assignment algorithm (nearest available)"
+    - "Wire Pusher events for real-time status updates"
+    - "Create delivery fee estimation endpoint"
+    - "Build DeliveryDashboard + AddressForm components"
+
+  phase_3_tracking:
+    - "Build public tracking page /track/[token]"
+    - "Implement customer notifications (LINE/FB)"
+    - "Create TrackingMap component with live updates"
+    - "Generate tracking token on order creation"
+
+  phase_4_external:
+    - "Implement LineMan adapter (API integration)"
+    - "Implement Grab adapter"
+    - "External fallback logic in driver assignment"
+    - "Webhook handlers for external status updates"
+
+  testing:
+    - "Unit: Fee calculation, zone point-in-polygon, state machine"
+    - "Integration: Order → assign → dispatch → deliver flow"
+    - "E2E: Full delivery lifecycle (Playwright)"
+    - "Load: Concurrent driver assignment race condition test"

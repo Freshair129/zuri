@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.dev/orchestrator/node_modules/
+
+# Next.js
+.next/
+out/
+mnt/
+zuri1.0/
+
+# Environment (secrets)
+.env
+.env.local
+.env.production.local
+.dev/**/.env
+.dev/**/.env.local
+.dev/**/credentials*.json
+
+# Vercel
+.vercel
+
+# Playwright
+tests/e2e/.auth/
+playwright-report/
+test-results/
+
+# Build
+*.tsbuildinfo
+
+# Obsidian personal config (vault settings are personal)
+docs/_vault/.obsidian/
+.obsidian/
+
+# Second brain workspace (agent memory — gitignored, per-agent)
+wiki/
+
+# Agent identity (per-dev local config — do NOT commit)
+CLAUDE.local.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+docs/devtools 
+.mcp.json  
+
+.vercel

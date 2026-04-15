@@ -1,0 +1,116 @@
+# FEAT-017_LINEAgentMode.yaml
+# Spec Reference: FEAT12-LINE-AGENT.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-017
+  spec_id: FEAT12
+  name: "LINE Auto-Reply Agent Mode"
+  module: "MOD-INBOX"
+  status: "stable"
+  version: "1.0.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT12-LINE-AGENT.md"
+  depends_on: ["FEAT-004_Inbox", "FEAT-005_CRM", "FEAT-011_AIAssistant"]
+
+architectural_pattern:
+  pattern: "Real-time AI Webhook Responder with Human Takeover"
+  llm: "Gemini 2.0 Flash"
+  response_sla: "< 200ms webhook acknowledgment (LINE requirement)"
+  execution: "Async — queue Gemini call, respond immediately to LINE"
+  queue: "QStash (Gemini processing)"
+  realtime: "Pusher (notify staff of escalation)"
+
+data_logic:
+  agent_mode_fsm:
+    states: ["AGENT", "HUMAN"]
+    field: "Conversation.agentMode"
+    default: "AGENT"
+    transitions:
+      AGENT_to_HUMAN:
+        triggers:
+          - "Keyword: 'คุยกับคน', 'ขอคุยคน', 'human', 'staff'"
+          - "Negative sentiment detected (score < -0.5)"
+          - "agentTurnCount > 3 without resolution"
+          - "Complex intent: discount/refund/complaint"
+        action: "Set agentMode=HUMAN + Pusher notify staff"
+      HUMAN_to_AGENT:
+        trigger: "Staff manually toggles Agent Mode back on"
+        action: "Set agentMode=AGENT, reset agentTurnCount=0"
+
+  context_injection:
+    customer_profile: "Name, channel, lifecycle stage, last 3 tags"
+    purchase_history: "Last 5 orders with amounts"
+    enrollments: "Active/completed courses"
+    schedules: "Upcoming class dates"
+    message_history: "Last 10 messages"
+    faq: "Tenant-customized system prompt"
+
+  reply_pipeline:
+    step_1: "Webhook received → acknowledge 200 immediately"
+    step_2: "Enqueue to QStash: POST /api/ai/agent-process"
+    step_3: "AgentProcessor: buildContext → Gemini Flash → escalation check"
+    step_4: "If AGENT mode: send reply via LINE Messaging API"
+    step_5: "Log as Message(sender=AI) in conversation"
+    step_6: "If escalation triggered: switch mode + notify staff"
+
+  tenant_customization:
+    field: "IntegrationConfig.agentSystemPrompt"
+    default: "Standard Zuri CRM persona"
+    ui: "Settings → Inbox → Agent Mode → Custom Prompt"
+
+api_contracts:
+  - endpoint: "POST /api/webhooks/line"
+    description: "LINE webhook handler — immediate 200 + async queue"
+    note: "Existing — add agentMode routing logic"
+    auth: "LINE signature verification"
+
+  - endpoint: "POST /api/ai/agent-process"
+    description: "QStash worker — build context + call Gemini + reply"
+    payload: { conversationId: "uuid", messageId: "uuid", webhookPayload: "object" }
+    auth: "QStash signature"
+
+  - endpoint: "POST /api/ai/agent-mode/toggle"
+    description: "Staff manually toggle Agent/Human mode"
+    payload: { conversationId: "uuid", mode: "AGENT|HUMAN" }
+    auth: "SLS/STF/MGR"
+
+security_matrix:
+  rules:
+    - role: "SLS/STF"
+      resource: "AgentMode"
+      can: ["TOGGLE", "READ"]
+      condition: "Assigned conversation only"
+    - role: "MGR/ADM"
+      resource: "AgentSystemPrompt"
+      can: ["CONFIGURE"]
+    - role: "SYSTEM"
+      resource: "Conversation"
+      can: ["UPDATE_AGENT_MODE"]
+      note: "Via QStash worker only"
+
+geography:
+  tables:
+    existing:
+      - "Conversation (add: agentMode enum, agentTurnCount int)"
+      - "Message (sender field: CUSTOMER|STAFF|AI)"
+      - "ConversationLog"
+  components:
+    existing:
+      - "src/components/inbox/ChatView.jsx (add Agent Mode toggle)"
+      - "src/components/inbox/RightPanel.jsx (add mode indicator)"
+    new:
+      - "src/components/inbox/AgentModeToggle.jsx"
+  api_routes:
+    existing:
+      - "src/app/api/webhooks/line/route.js (modify)"
+      - "src/app/api/ai/agent-mode/toggle/route.js (exists)"
+    new:
+      - "src/app/api/ai/agent-process/route.js"
+  lib:
+    existing:
+      - "src/lib/ai/agentMode.js"
+      - "src/lib/ai/assistant.js"
+    new:
+      - "src/lib/ai/agentContextBuilder.js"
+      - "src/lib/ai/escalationDetector.js"

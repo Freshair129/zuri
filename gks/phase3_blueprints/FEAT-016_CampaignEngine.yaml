@@ -1,0 +1,113 @@
+# FEAT-016_CampaignEngine.yaml
+# Spec Reference: FEAT16-CAMPAIGN.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-016
+  spec_id: FEAT16
+  name: "Outbound Broadcast Campaign Engine"
+  module: "MOD-MARKETING"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT16-CAMPAIGN.md"
+  depends_on: ["FEAT-004_Inbox", "FEAT-005_CRM", "FEAT-001_MultiTenant"]
+
+architectural_pattern:
+  pattern: "Throttled Broadcast Queue with Attribution Tracking"
+  queue: "QStash (throttled batch dispatch — 30 msg/min)"
+  cache: "Redis (send lock — prevent duplicate dispatch)"
+  attribution: "Campaign ROAS: orders within 7 days post-send"
+
+data_logic:
+  campaign_builder:
+    steps: [name_channel, segment_select, message_template, preview, schedule]
+    personalization_vars: ["{{name}}", "{{lastCourse}}", "{{daysSinceContact}}", "{{agentName}}"]
+    ai_draft: "POST /api/ai/campaign-draft (SSE)"
+
+  broadcast_engine:
+    throttle: "30 messages/min default (configurable)"
+    worker: "POST /api/workers/campaign-broadcast"
+    idempotency: "Redis lock: campaign:{id}:sending"
+    opt_out_keywords: ["ไม่รับ", "ยกเลิก", "unsubscribe", "STOP"]
+    cooldown: "Customer cannot receive same campaign twice in N days"
+    batch_size: 50
+
+  attribution:
+    window: "7 days post-send"
+    logic: "Order.customerId IN campaign recipients AND order.createdAt within 7 days"
+    metric: "Campaign ROAS = revenue / campaign cost"
+
+api_contracts:
+  - endpoint: "GET /api/marketing/campaigns"
+    note: "Existing — extend to include campaign type (broadcast)"
+
+  - endpoint: "POST /api/marketing/campaigns"
+    description: "Create campaign (Draft state)"
+    payload: { name: "string", channel: "LINE|FB", segmentId: "uuid", messageTemplate: "string", scheduledAt: "datetime?" }
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/marketing/campaigns/{id}"
+    description: "Campaign detail + stats"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/marketing/campaigns/{id}/send"
+    description: "Trigger broadcast — enqueue QStash jobs"
+    auth: "MGR/ADM"
+    side_effects: ["Set status=SENDING", "Enqueue QStash batch", "Create CampaignLog entries"]
+
+  - endpoint: "POST /api/marketing/campaigns/{id}/cancel"
+    description: "Stop sending (drains queue)"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/marketing/campaigns/{id}/logs"
+    description: "Per-recipient delivery log"
+    params: { status: "string?", page: "number?" }
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/ai/campaign-draft"
+    description: "AI drafts message template (SSE streaming)"
+    payload: { intent: "string", channel: "LINE|FB", segmentDescription: "string" }
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/workers/campaign-broadcast"
+    description: "QStash worker — sends next batch of messages"
+    auth: "QStash signature"
+
+security_matrix:
+  rules:
+    - role: "MGR/ADM"
+      resource: "Campaign"
+      can: ["CREATE", "READ", "UPDATE", "SEND", "CANCEL"]
+    - role: "SLS/STF"
+      resource: "Campaign"
+      can: ["READ"]
+      note: "View-only"
+
+geography:
+  tables:
+    new:
+      - "CampaignBroadcast (name, channel, segmentId, messageTemplate, status, scheduledAt, throttlePerMin)"
+      - "CampaignLog (campaignId, customerId, status, sentAt, deliveredAt, repliedAt)"
+    existing:
+      - "Customer (add: optOut boolean, lastCampaignAt datetime)"
+      - "CustomerSegment"
+  pages:
+    new:
+      - "src/app/(dashboard)/marketing/campaigns/[id]/page.jsx"
+      - "src/app/(dashboard)/marketing/campaigns/new/page.jsx"
+  components:
+    new:
+      - "src/components/marketing/CampaignBuilder.jsx"
+      - "src/components/marketing/CampaignReport.jsx"
+      - "src/components/marketing/RecipientLog.jsx"
+  api_routes:
+    new:
+      - "src/app/api/marketing/campaigns/[id]/send/route.js"
+      - "src/app/api/marketing/campaigns/[id]/cancel/route.js"
+      - "src/app/api/marketing/campaigns/[id]/logs/route.js"
+      - "src/app/api/ai/campaign-draft/route.js"
+      - "src/app/api/workers/campaign-broadcast/route.js"
+  repositories:
+    new:
+      - "src/lib/repositories/campaignBroadcastRepo.js"

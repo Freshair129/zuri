@@ -1,0 +1,19 @@
+# Dev tooling — ไม่ deploy ขึ้น Vercel
+.dev/
+docs/
+changelog/
+
+# Config YAML — ใช้ตอน build ได้ (systemConfig.js อ่าน)
+# *.yaml ← ไม่ ignore เพราะ systemConfig.js ต้องอ่าน
+
+# Markdown docs (ยกเว้น CLAUDE.md ที่ต้อง deploy)
+# ไม่ ignore *.md ทั้งหมด เพราะ Next.js อาจใช้
+
+# Test files
+**/*.test.js
+**/*.spec.js
+vitest.config.*
+
+# Git
+.git/
+.gitignore

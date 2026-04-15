@@ -1,0 +1,492 @@
+# FEAT-014_WorkflowAutomation.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-014
+  name: "Workflow Automation — Visual TCA Engine"
+  module: "MOD-CRM"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "gks/02_features/FEAT--workflow-automation.md"
+  depends_on: ["FEAT-005_CRM", "FEAT-004_Inbox", "FEAT-001_MultiTenant"]
+
+# ──────────────────────────────────────────────
+# OVERVIEW
+# ──────────────────────────────────────────────
+# Trigger-Condition-Action (TCA) automation engine that reduces
+# manual follow-up work for sales teams.
+#
+# Existing code:
+#   - TCA pattern defined in FEAT-005_CRM.yaml (automation_engine section)
+#   - PROTO--automation-cron.md (E-C-E pipeline protocol)
+#   - /api/workers/check-completion worker (example QStash cron)
+#   - CRM automation_logs concept
+#
+# Gap: Dedicated data model, CRUD API, visual builder UI,
+#   expanded trigger/action types, execution engine, analytics
+
+architectural_pattern:
+  pattern: "Event-Driven TCA Pipeline with Visual Builder"
+  evaluation_modes:
+    cron: "QStash hourly scan for time-based triggers"
+    event: "Webhook/hook-based for real-time triggers"
+  execution: "QStash fire-and-forget (async, idempotent)"
+  builder_ui: "React-based visual workflow editor"
+  safety:
+    cooldown: "1 workflow per customer per 24 hours (configurable)"
+    rate_limit: "Max 500 executions per tenant per hour"
+    circuit_breaker: "Disable workflow if error rate > 30% in last hour"
+
+# ──────────────────────────────────────────────
+# DATA MODEL (New Prisma Models)
+# ──────────────────────────────────────────────
+data_model:
+  AutomationWorkflow:
+    fields:
+      id: "uuid @default(cuid())"
+      tenantId: "String"
+      name: "String"
+      description: "String?"
+      isActive: "Boolean @default(false)"
+      # TCA Definition
+      triggerType: "TriggerType"
+      triggerConfig: "Json"       # Type-specific config (see trigger_types)
+      conditions: "Json"          # Array of condition rules
+      actions: "Json"             # Array of action definitions
+      # Safety
+      cooldownHours: "Int @default(24)"
+      maxExecutionsPerDay: "Int @default(100)"
+      # Metadata
+      lastExecutedAt: "DateTime?"
+      totalExecutions: "Int @default(0)"
+      totalErrors: "Int @default(0)"
+      createdBy: "String"
+      createdAt: "DateTime @default(now())"
+      updatedAt: "DateTime @updatedAt"
+    indexes: ["@@index([tenantId, isActive])", "@@index([triggerType])"]
+
+  AutomationExecution:
+    fields:
+      id: "uuid @default(cuid())"
+      tenantId: "String"
+      workflowId: "String"       # FK to AutomationWorkflow
+      customerId: "String"       # FK to Customer
+      status: "ExecutionStatus"  # PENDING, RUNNING, SUCCESS, FAILED, SKIPPED
+      triggerEvent: "Json"       # Snapshot of trigger data
+      conditionResult: "Boolean" # Did conditions pass?
+      actionResults: "Json"      # Per-action result array
+      error: "String?"
+      executedAt: "DateTime @default(now())"
+      durationMs: "Int?"
+    indexes: ["@@index([tenantId, workflowId])", "@@index([customerId, executedAt])"]
+
+  AutomationCooldown:
+    fields:
+      id: "uuid @default(cuid())"
+      tenantId: "String"
+      workflowId: "String"
+      customerId: "String"
+      expiresAt: "DateTime"
+    indexes: ["@@unique([tenantId, workflowId, customerId])"]
+
+  enums:
+    TriggerType: "TIME_INACTIVE | TIME_SCHEDULED | EVENT_STAGE_CHANGE | EVENT_TAG_ADDED | EVENT_ORDER_COMPLETED | EVENT_MESSAGE_RECEIVED | AI_INTENT_DETECTED"
+    ExecutionStatus: "PENDING | RUNNING | SUCCESS | FAILED | SKIPPED"
+
+# ──────────────────────────────────────────────
+# TRIGGER TYPES
+# ──────────────────────────────────────────────
+trigger_types:
+  time_based:
+    - type: "TIME_INACTIVE"
+      description: "Customer has no interaction for N days"
+      config: { inactiveDays: "number", stages: "string[]?" }
+      evaluation: "Cron scan — compare lastContactAt with threshold"
+      example: "No contact for 3 days while in INTERESTED stage"
+
+    - type: "TIME_SCHEDULED"
+      description: "Fixed schedule (daily/weekly at specific time)"
+      config: { cronExpression: "string", timezone: "string" }
+      evaluation: "QStash cron trigger"
+      example: "Every Monday 09:00 ICT — weekly follow-up batch"
+
+  event_based:
+    - type: "EVENT_STAGE_CHANGE"
+      description: "Customer lifecycle stage changes"
+      config: { fromStage: "string?", toStage: "string" }
+      evaluation: "Hook in customer stage update endpoint"
+      example: "Customer moves to READY_TO_BUY stage"
+
+    - type: "EVENT_TAG_ADDED"
+      description: "Specific tag applied to customer"
+      config: { tagName: "string" }
+      evaluation: "Hook in customer tag endpoint"
+      example: "Tag 'VIP' added to customer"
+
+    - type: "EVENT_ORDER_COMPLETED"
+      description: "Order payment confirmed"
+      config: { minAmount: "number?", orderType: "string?" }
+      evaluation: "Hook in payment confirmation flow"
+      example: "Order > ฿5,000 completed"
+
+    - type: "EVENT_MESSAGE_RECEIVED"
+      description: "New message from customer"
+      config: { platform: "string?", keywords: "string[]?" }
+      evaluation: "Hook in webhook ingestion pipeline"
+      example: "Customer sends message containing 'สนใจ'"
+
+  ai_driven:
+    - type: "AI_INTENT_DETECTED"
+      description: "AI conversation analyzer detects buying intent"
+      config: { intentType: "string", confidenceThreshold: "number" }
+      evaluation: "Hook in conversation analysis pipeline"
+      example: "AI detects READY_TO_BUY with confidence >= 0.8"
+
+# ──────────────────────────────────────────────
+# CONDITION ENGINE
+# ──────────────────────────────────────────────
+condition_engine:
+  structure: "Array of rules with AND/OR logic"
+  rule_format:
+    field: "Customer field path (e.g., 'lifecycleStage', 'tags', 'totalSpend')"
+    operator: "EQUALS | NOT_EQUALS | CONTAINS | GT | LT | GTE | LTE | IN | NOT_IN | IS_SET | IS_NOT_SET"
+    value: "any"
+  examples:
+    - description: "Hot lead with LINE"
+      rules:
+        - { field: "lifecycleStage", operator: "IN", value: ["INTERESTED", "READY_TO_BUY"] }
+        - { field: "lineUserId", operator: "IS_SET" }
+    - description: "High-value customer"
+      rules:
+        - { field: "totalSpend", operator: "GTE", value: 10000 }
+  evaluation: "All rules must pass (AND logic). OR groups via nested arrays."
+
+# ──────────────────────────────────────────────
+# ACTION TYPES
+# ──────────────────────────────────────────────
+action_types:
+  - type: "SEND_LINE_MESSAGE"
+    description: "Send LINE message using template"
+    config: { templateId: "string", variables: "object" }
+    execution: "LINE Messaging API via src/lib/line/lineUtil.js"
+    failure_mode: "Log error, continue to next action"
+
+  - type: "SEND_FB_MESSAGE"
+    description: "Send Facebook Messenger message"
+    config: { templateId: "string", variables: "object" }
+    execution: "FB Graph API via existing messenger util"
+
+  - type: "NOTIFY_STAFF"
+    description: "Push notification to assigned agent or team"
+    config: { targetType: "ASSIGNED_AGENT | TEAM | SPECIFIC_USER", userId: "string?" }
+    execution: "Web Push + Pusher notification"
+
+  - type: "UPDATE_STAGE"
+    description: "Move customer to new lifecycle stage"
+    config: { newStage: "string" }
+    execution: "customerRepo.updateStage()"
+
+  - type: "ADD_TAG"
+    description: "Apply tag to customer"
+    config: { tagName: "string" }
+    execution: "customerRepo.addTag()"
+
+  - type: "CREATE_TASK"
+    description: "Create follow-up task for agent"
+    config: { title: "string", dueInHours: "number", assignTo: "ASSIGNED_AGENT | SPECIFIC_USER" }
+    execution: "taskRepo.create()"
+
+  - type: "LOG_ACTIVITY"
+    description: "Add entry to customer activity timeline"
+    config: { type: "string", message: "string" }
+    execution: "customerActivityRepo.create()"
+
+  - type: "WEBHOOK"
+    description: "Call external URL (for custom integrations)"
+    config: { url: "string", method: "POST", headers: "object?", bodyTemplate: "string" }
+    execution: "fetch() with 10s timeout"
+    security: "URL must be HTTPS, body sanitized"
+
+# ──────────────────────────────────────────────
+# EXECUTION ENGINE
+# ──────────────────────────────────────────────
+execution_engine:
+  cron_worker:
+    endpoint: "POST /api/workers/automation-engine"
+    schedule: "QStash cron — every hour at :05"
+    logic:
+      - "Fetch active workflows with TIME_* triggers"
+      - "For each workflow: find matching customers"
+      - "Check cooldown (AutomationCooldown table)"
+      - "Evaluate conditions"
+      - "Execute actions sequentially"
+      - "Log execution to AutomationExecution"
+      - "Set cooldown entry"
+    batch_size: 50
+    timeout: "55 seconds (QStash max)"
+    error_isolation: "Per-customer try/catch — one failure doesn't block batch"
+
+  event_hook:
+    pattern: "Inline hook in existing API endpoints"
+    hooks:
+      - location: "POST /api/customers/:id/stage"
+        fires: "EVENT_STAGE_CHANGE"
+      - location: "POST /api/customers/:id/tags"
+        fires: "EVENT_TAG_ADDED"
+      - location: "POST /api/pos/orders (payment confirmed)"
+        fires: "EVENT_ORDER_COMPLETED"
+      - location: "POST /api/webhooks/:platform"
+        fires: "EVENT_MESSAGE_RECEIVED"
+      - location: "POST /api/workers/auto-tag (AI analysis)"
+        fires: "AI_INTENT_DETECTED"
+    execution: "Dispatch to QStash for async processing (non-blocking)"
+
+  safety_mechanisms:
+    cooldown:
+      check: "SELECT FROM AutomationCooldown WHERE workflowId AND customerId AND expiresAt > now()"
+      set: "INSERT cooldown with expiresAt = now() + workflow.cooldownHours"
+    rate_limit:
+      check: "COUNT executions in last hour for tenant"
+      limit: 500
+      action: "Skip remaining, log RATE_LIMITED"
+    circuit_breaker:
+      window: "1 hour"
+      threshold: "30% error rate"
+      action: "Auto-disable workflow, notify admin"
+      reset: "Manual re-enable by admin"
+
+# ──────────────────────────────────────────────
+# API CONTRACTS
+# ──────────────────────────────────────────────
+api_contracts:
+  # --- Workflow CRUD ---
+  - endpoint: "GET /api/automations"
+    description: "List all workflows for tenant"
+    params: { active_only: "boolean?", page: "number?", limit: "number?" }
+    returns: "{ workflows: AutomationWorkflow[], total: number }"
+    auth: "MGR/ADM"
+
+  - endpoint: "POST /api/automations"
+    description: "Create new workflow"
+    payload:
+      name: "string"
+      triggerType: "TriggerType"
+      triggerConfig: "object"
+      conditions: "ConditionRule[]"
+      actions: "ActionDefinition[]"
+      cooldownHours: "number?"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/automations/{id}"
+    description: "Get workflow detail with recent executions"
+    returns: "AutomationWorkflow + last 20 executions"
+    auth: "MGR/ADM"
+
+  - endpoint: "PUT /api/automations/{id}"
+    description: "Update workflow definition"
+    auth: "MGR/ADM"
+
+  - endpoint: "DELETE /api/automations/{id}"
+    description: "Soft-delete workflow (set isActive=false, mark deleted)"
+    auth: "ADM"
+
+  - endpoint: "POST /api/automations/{id}/toggle"
+    description: "Activate or deactivate workflow"
+    payload: { active: "boolean" }
+    auth: "MGR/ADM"
+
+  # --- Execution & Analytics ---
+  - endpoint: "POST /api/automations/{id}/execute"
+    description: "Manual trigger — test run on specific customers"
+    payload: { customerIds: "uuid[]?", dryRun: "boolean?" }
+    returns: "{ executed: number, skipped: number, results: ExecutionResult[] }"
+    auth: "ADM"
+
+  - endpoint: "GET /api/automations/{id}/executions"
+    description: "Execution history with pagination"
+    params: { page: "number?", status: "ExecutionStatus?" }
+    returns: "{ executions: AutomationExecution[], total: number }"
+    auth: "MGR/ADM"
+
+  - endpoint: "GET /api/automations/analytics"
+    description: "Aggregate automation performance metrics"
+    returns: |
+      {
+        totalWorkflows, activeWorkflows,
+        executionsToday, successRate,
+        topPerformers: [{ workflowId, name, executions, successRate }],
+        recentErrors: [{ workflowId, error, timestamp }]
+      }
+    auth: "MGR/ADM"
+
+  # --- Templates ---
+  - endpoint: "GET /api/automations/templates"
+    description: "Pre-built workflow templates"
+    returns: "WorkflowTemplate[]"
+    auth: "MGR/ADM"
+
+  # --- Worker ---
+  - endpoint: "POST /api/workers/automation-engine"
+    description: "QStash cron worker — hourly time-based trigger evaluation"
+    auth: "QStash signature verification"
+
+# ──────────────────────────────────────────────
+# WORKFLOW TEMPLATES (Pre-built)
+# ──────────────────────────────────────────────
+templates:
+  - id: "TPL_COLD_LEAD_FOLLOWUP"
+    name: "Cold Lead Follow-up"
+    trigger: { type: "TIME_INACTIVE", config: { inactiveDays: 3 } }
+    conditions:
+      - { field: "lifecycleStage", operator: "IN", value: ["NEW", "CONTACTED"] }
+    actions:
+      - { type: "NOTIFY_STAFF", config: { targetType: "ASSIGNED_AGENT" } }
+      - { type: "ADD_TAG", config: { tagName: "needs-followup" } }
+
+  - id: "TPL_HOT_LEAD_ALERT"
+    name: "Hot Lead Alert"
+    trigger: { type: "AI_INTENT_DETECTED", config: { intentType: "READY_TO_BUY", confidenceThreshold: 0.8 } }
+    conditions:
+      - { field: "lineUserId", operator: "IS_SET" }
+    actions:
+      - { type: "NOTIFY_STAFF", config: { targetType: "ASSIGNED_AGENT" } }
+      - { type: "UPDATE_STAGE", config: { newStage: "READY_TO_BUY" } }
+
+  - id: "TPL_POST_PURCHASE_THANK_YOU"
+    name: "Post-Purchase Thank You"
+    trigger: { type: "EVENT_ORDER_COMPLETED", config: {} }
+    conditions:
+      - { field: "lineUserId", operator: "IS_SET" }
+    actions:
+      - { type: "SEND_LINE_MESSAGE", config: { templateId: "thank_you", variables: { customerName: "{{name}}" } } }
+      - { type: "LOG_ACTIVITY", config: { type: "AUTOMATION", message: "Sent post-purchase thank you" } }
+
+  - id: "TPL_VIP_UPGRADE"
+    name: "VIP Customer Upgrade"
+    trigger: { type: "EVENT_ORDER_COMPLETED", config: { minAmount: 10000 } }
+    conditions:
+      - { field: "totalSpend", operator: "GTE", value: 50000 }
+    actions:
+      - { type: "ADD_TAG", config: { tagName: "VIP" } }
+      - { type: "NOTIFY_STAFF", config: { targetType: "ASSIGNED_AGENT" } }
+      - { type: "CREATE_TASK", config: { title: "VIP onboarding call", dueInHours: 24, assignTo: "ASSIGNED_AGENT" } }
+
+  - id: "TPL_ENROLLMENT_UNPAID"
+    name: "Enrollment Unpaid Reminder"
+    trigger: { type: "TIME_SCHEDULED", config: { cronExpression: "0 9 * * *", timezone: "Asia/Bangkok" } }
+    conditions:
+      - { field: "hasUnpaidEnrollment", operator: "EQUALS", value: true }
+      - { field: "lineUserId", operator: "IS_SET" }
+    actions:
+      - { type: "SEND_LINE_MESSAGE", config: { templateId: "payment_reminder" } }
+
+# ──────────────────────────────────────────────
+# SECURITY MATRIX
+# ──────────────────────────────────────────────
+security_matrix:
+  rules:
+    - role: "SLS/STF"
+      resource: "AutomationWorkflow"
+      can: ["READ"]
+      note: "View-only for sales team"
+    - role: "MGR"
+      resource: "AutomationWorkflow"
+      can: ["CREATE", "READ", "UPDATE", "TOGGLE"]
+    - role: "ADM"
+      resource: "AutomationWorkflow"
+      can: ["CREATE", "READ", "UPDATE", "DELETE", "TOGGLE", "EXECUTE"]
+    - role: "SYSTEM"
+      resource: "AutomationExecution"
+      can: ["CREATE"]
+      note: "Only workers create execution records"
+
+# ──────────────────────────────────────────────
+# GEOGRAPHY (Code Locations)
+# ──────────────────────────────────────────────
+geography:
+  tables:
+    new:
+      - "AutomationWorkflow"
+      - "AutomationExecution"
+      - "AutomationCooldown"
+    existing:
+      - "Customer"
+      - "CustomerActivity"
+      - "Task"
+  pages:
+    new:
+      - "src/app/(dashboard)/automations/page.jsx"           # Workflow list
+      - "src/app/(dashboard)/automations/[id]/page.jsx"      # Workflow detail + executions
+      - "src/app/(dashboard)/automations/new/page.jsx"       # Create workflow
+      - "src/app/(dashboard)/automations/analytics/page.jsx" # Performance dashboard
+  components:
+    new:
+      - "src/components/automations/WorkflowList.jsx"        # List with toggle switches
+      - "src/components/automations/WorkflowBuilder.jsx"     # Visual TCA editor
+      - "src/components/automations/TriggerSelector.jsx"     # Trigger type picker
+      - "src/components/automations/ConditionBuilder.jsx"    # Rule builder (field/op/value)
+      - "src/components/automations/ActionConfigurator.jsx"  # Action setup per type
+      - "src/components/automations/ExecutionLog.jsx"        # Execution history table
+      - "src/components/automations/AnalyticsDashboard.jsx"  # Performance charts
+      - "src/components/automations/TemplateGallery.jsx"     # Pre-built templates
+  api_routes:
+    new:
+      - "src/app/api/automations/route.js"                   # GET list, POST create
+      - "src/app/api/automations/[id]/route.js"              # GET, PUT, DELETE
+      - "src/app/api/automations/[id]/toggle/route.js"       # POST toggle
+      - "src/app/api/automations/[id]/execute/route.js"      # POST manual execute
+      - "src/app/api/automations/[id]/executions/route.js"   # GET execution history
+      - "src/app/api/automations/analytics/route.js"         # GET analytics
+      - "src/app/api/automations/templates/route.js"         # GET templates
+      - "src/app/api/workers/automation-engine/route.js"     # QStash cron worker
+  repositories:
+    new:
+      - "src/lib/repositories/automationRepo.js"
+  services:
+    new:
+      - "src/lib/services/automationEngine.js"               # Core evaluation + execution
+      - "src/lib/services/conditionEvaluator.js"             # Condition rule engine
+      - "src/lib/services/actionExecutor.js"                 # Action dispatcher
+
+# ──────────────────────────────────────────────
+# IMPLEMENTATION TASKS
+# ──────────────────────────────────────────────
+implementation_tasks:
+  phase_1_foundation:
+    - "Add AutomationWorkflow, AutomationExecution, AutomationCooldown to Prisma"
+    - "Run migration: npx prisma migrate dev --name add_automation_models"
+    - "Create automationRepo.js with CRUD operations"
+    - "Create CRUD API endpoints (/api/automations)"
+    - "Build WorkflowList component with toggle switches"
+
+  phase_2_engine:
+    - "Implement conditionEvaluator.js (rule engine)"
+    - "Implement actionExecutor.js (dispatch per action type)"
+    - "Implement automationEngine.js (orchestrator)"
+    - "Create QStash cron worker for time-based triggers"
+    - "Add event hooks to existing endpoints (stage change, tag, order, message)"
+    - "Implement cooldown logic"
+
+  phase_3_builder_ui:
+    - "Build WorkflowBuilder visual editor component"
+    - "Build TriggerSelector with config forms per type"
+    - "Build ConditionBuilder (field/operator/value rows)"
+    - "Build ActionConfigurator per action type"
+    - "Create /automations/new page with full builder flow"
+    - "Implement TemplateGallery with pre-built workflows"
+
+  phase_4_analytics:
+    - "Build AnalyticsDashboard component"
+    - "Create analytics API endpoint"
+    - "Create ExecutionLog component with filters"
+    - "Implement circuit breaker logic"
+    - "Add manual execute + dry-run functionality"
+
+  testing:
+    - "Unit: conditionEvaluator (all operators), actionExecutor (each type)"
+    - "Integration: Full TCA pipeline — trigger → condition → action → log"
+    - "E2E: Create workflow → activate → trigger → verify execution (Playwright)"
+    - "Safety: Cooldown enforcement, rate limiting, circuit breaker"
+    - "Load: 500 concurrent executions per tenant"

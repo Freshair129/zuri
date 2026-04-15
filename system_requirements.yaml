@@ -1,0 +1,1006 @@
+# Created At: 2026-04-02 00:00:00 +07:00 (v2.4.0)
+# Previous version: 2026-04-02 00:00:00 +07:00 (v2.4.0)
+# Last Updated: 2026-04-12 18:00:00 +07:00 (v2.5.0)
+
+system_name: "Zuri Platform v2"
+version: "2.5.0"
+last_updated: "2026-04-12"
+
+description: |
+  Greenfield CRM สำหรับ Zuri Platform — เขียนใหม่ทั้งหมด (ไม่ใช่ refactor)
+  รวม Meta Ads sync, Messenger/LINE inbox, AI (Gemini), Kitchen Ops,
+  Course Enrollment, Asset Management, Recipe & Package management,
+  Procurement, Inventory Control, Ads Optimization, Loyalty System,
+  Web Push Notifications, Automated Certification, NotebookLM Intelligence,
+  Task Type System (SINGLE/RANGE/PROJECT), Milestone Editor, Notion Sync,
+  and 6-role Persona-Based RBAC (ADR-068).
+
+tech_stack:
+  framework: "Next.js 14 App Router"
+  database: "PostgreSQL (Supabase) via Prisma ORM"
+  queue: "Upstash QStash (HTTP) — แทน BullMQ local worker (ADR-040)"
+  cache: "Upstash Redis REST — แทน ioredis local docker (ADR-040)"
+  ai: "Google Gemini 2.0 Flash"
+  styling: "TailwindCSS"
+  marketing_api: "Meta Graph API v19.0"
+  auth: "NextAuth.js (CredentialsOnly — ADR-035)"
+  push: "Web Push (VAPID) — ADR-044"
+
+# ─────────────────────────────────────────────────────────
+# FUNCTIONAL REQUIREMENTS
+# ─────────────────────────────────────────────────────────
+
+functional_requirements:
+
+  # ── MODULE 1: AUTH & RBAC ──────────────────────────────
+
+  - module: "Authentication & RBAC"
+    ui_tab: "LoginPage"
+    status: "✅ Working"
+    adr: "ADR-026, ADR-035, ADR-068"
+    description: "Email+Password login, 6-role Persona-Based RBAC (ADR-068), Multi-tenant JWT context"
+
+    features:
+      - name: "FR1.1: Email & Password Login"
+        status: "✅ Working"
+        description: "NextAuth CredentialsProvider — bcrypt hash verify"
+
+      - name: "FR1.2: Employee-to-Identity Mapping"
+        status: "✅ Working"
+        description: |
+          Employee.identities JSONB เก็บ { facebook: { psid, name }, line: { id } }
+          ใช้ระบุว่าพนักงานคนไหนตอบข้อความนั้น (responder attribution)
+
+      - name: "FR1.3: Role-Based Access Control (RBAC v3 — Persona-Based)"
+        status: "✅ Working"
+        description: |
+          6-role Persona-Based RBAC (ADR-068 — supersedes ADR-045):
+          DEV, OWNER, MANAGER, SALES, KITCHEN, FINANCE, STAFF
+          Centralized config: src/lib/permissionMatrix.js (can() helper)
+
+  # ── MODULE 2: MESSAGING & WEBHOOK ─────────────────────
+
+  - module: "Messaging & Webhook"
+    ui_tab: ["UnifiedInbox"]
+    status: "✅ Working"
+    adr: "ADR-028, ADR-033"
+    dependencies: ["Meta Graph API v19.0", "LINE Messaging API", "Redis", "BullMQ"]
+    features:
+      - name: "FR2.1: Receive Facebook Webhooks"
+        status: "✅ Working"
+        description: "รับ Message/Postback/Opt-in events จาก Meta < 200ms (NFR1)"
+        implementation: "src/app/api/webhooks/facebook/route.js"
+        note: "P2002 race condition fixed — try-catch create + findFirst fallback"
+
+      - name: "FR2.2: Receive LINE Webhooks"
+        status: "✅ Working"
+        description: "รับข้อความ LINE, verify X-Line-Signature"
+        implementation: "src/app/api/webhooks/line/route.js"
+
+      - name: "FR2.3: Idempotency (Prevent Duplicates)"
+        status: "✅ Working"
+        description: "ป้องกันข้อความซ้ำด้วย Message.messageId (fb_mid) unique constraint"
+
+      - name: "FR2.4: Referral & Ad Attribution"
+        status: "✅ Working"
+        description: "บันทึก ad_id จาก Webhook referral → Customer.originId"
+
+      - name: "FR2.5: Unified Inbox (FB + LINE)"
+        status: "✅ Working"
+        description: "หน้า inbox รวม FB + LINE พร้อม pagination, reply, customer card"
+        implementation: "src/components/UnifiedInbox.js"
+
+      - name: "FR2.6: Notification Engine"
+        status: "✅ Working"
+        description: |
+          evaluateRules() ตรวจ keyword/tier/VIP conditions
+          → Upstash QStash publishJSON → /api/workers/notification (Vercel serverless)
+          → verify QStash signature → LINE push via pushMessage()
+        implementation: "src/lib/notificationEngine.js, src/app/api/workers/notification/route.js"
+        note: "v0.27.0 (ADR-040): notificationWorker.mjs + queue.js ถูกลบแล้ว — แทนด้วย QStash"
+
+  # ── MODULE 3: IDENTITY RESOLUTION ─────────────────────
+
+  - module: "Identity Resolution"
+    ui_tab: ["customers"]
+    status: "✅ Working"
+    adr: "ADR-025"
+
+    features:
+      - name: "FR3.1: Phone Number Normalization (E.164)"
+        status: "✅ Working"
+        description: "normalizePhone() แปลงเบอร์ → E.164 ก่อน upsert"
+
+      - name: "FR3.2: Cross-platform Identity Merge"
+        status: "✅ Working"
+        description: "merge FB + LINE ผ่าน phone match → single global_user_id (UUID)"
+        implementation: "src/lib/identityService.js"
+
+      - name: "FR3.3: Scraper Agent Attribution (Heuristic)"
+        status: "✅ Working"
+        description: |
+          แปลง 'Sent by [Name]' prefix → responder_id
+          ใช้ ADR-022: message text search fallback (min 15 chars)
+
+      - name: "FR3.4: Admin PSID Permanent Mapping"
+        status: "✅ Working"
+        description: "บันทึก PSID ใน Employee.identities.facebook.psid อัตโนมัติ"
+
+  # ── MODULE 4: MARKETING & ADS ─────────────────────────
+
+  - module: "Marketing & Ads"
+    ui_tab: ["facebook-ads", "ExecutiveAnalytics"]
+    status: "✅ Working"
+    adr: "ADR-024, ADR-030"
+    dependencies: ["Meta Graph API v19.0", "Redis"]
+    features:
+      - name: "FR4.1: Hourly Ad Sync"
+        status: "✅ Working"
+        description: |
+          Sync Ad metrics จาก Meta Graph API ทุกชั่วโมง
+          Exponential backoff retry (429) · Batch-of-5 concurrency
+          ACCESS_TOKEN_EXPIRED sentinel → 401 response
+        implementation: "src/app/api/marketing/sync-hourly/route.js"
+
+      - name: "FR4.2: Bottom-Up Aggregation"
+        status: "✅ Working"
+        description: |
+          Campaign metrics คำนวณ Bottom-Up จาก Ad level เสมอ (ADR-024 D2)
+          Campaign ไม่เก็บ aggregate — คำนวณใน app layer
+
+      - name: "FR4.3: Revenue Channel Split"
+        status: "✅ Working"
+        description: "conversationId → Ads vs Store classification (ADR-030)"
+
+      - name: "FR4.4: Hourly Ledger (Append-Only)"
+        status: "✅ Working"
+        description: "AdHourlyLedger — บันทึกเมื่อ delta ≠ 0 เท่านั้น"
+        implementation: "model AdHourlyLedger in schema.prisma"
+
+      - name: "FR4.5: Data Integrity Checksum"
+        status: "✅ Working"
+        description: "Sum(Ads.Metrics) == Campaign.Metrics — log mismatch เป็น error"
+
+      - name: "FR4.6: Differential Sync (Rate Limit Optimization)"
+        status: "✅ Working"
+        description: |
+          Ad-Level First fetch · updated_time filtering
+          Delta = 0 → ข้ามการเขียน record รายชั่วโมง
+          Full Sync ทุกต้นวัน (00:00-01:00)
+
+      - name: "FR4.7: Executive Analytics Dashboard"
+        status: "✅ Working"
+        description: "Recharts charts + KPI cards + Framer Motion"
+        implementation: "src/components/ExecutiveAnalytics.js"
+
+      - name: "FR4.8: AI Intent Analysis (Gemini)"
+        status: "✅ Working"
+        description: "ส่ง chat history ให้ Gemini วิเคราะห์ Customer Intent → Customer.intelligence"
+
+  # ── MODULE 5: CUSTOMER DATABASE ───────────────────────
+
+  - module: "Customer Database"
+    ui_tab: ["customers"]
+    status: "✅ Working"
+    features:
+      - name: "Customer Index (List + Search)"
+        status: "✅ Working"
+        implementation: "src/components/CustomerList.js"
+        description: "tier filter, search, FB/LINE deep links"
+
+      - name: "Customer 360 Profile"
+        status: "✅ Working"
+        description: "Timeline, Wallet, Tags, Enrollment history, Intelligence"
+
+      - name: "Customer Registration"
+        status: "✅ Working"
+        description: "inline creation จาก POS + inbox"
+
+      - name: "Membership Tiers"
+        status: "✅ Working"
+        values: ["MEMBER", "SILVER", "GOLD", "PLATINUM", "VIP", "DIAMOND"]
+
+  # ── MODULE 6: STORE & ORDER ───────────────────────────
+
+  - module: "Store & Order Management"
+    ui_tab: ["store", "orders"]
+    status: "✅ Working"
+    features:
+      - name: "PremiumPOS (Point of Sale)"
+        status: "✅ Working"
+        implementation: "src/components/PremiumPOS.js"
+        description: "inline customer creation + enrollment on checkout + success modal"
+
+      - name: "Shopping Cart"
+        status: "✅ Working"
+        description: "CartItem model — unique per customer+product"
+
+      - name: "Order & Transaction Tracking"
+        status: "✅ Working"
+        description: "Order → Transaction[] (slip + payment records)"
+
+      - name: "FR6.4: Receipt / Billing"
+        status: "🔄 Planned"
+        adr: "ADR-046"
+        description: |
+          ออกบิล/ใบเสร็จจาก POS checkout:
+          - Receipt ID: RCP-YYYYMMDD-XXX (auto-generate)
+          - Receipt model ผูก Order 1:1
+          - รองรับ thermal printer 80mm (ESC/POS) + browser print (A4)
+          - Print preview modal ก่อนพิมพ์
+          - ข้อมูลบิล: ชื่อร้าน, สาขา, วันที่, รายการสินค้า, ราคา, VAT 7%, รวม, วิธีชำระ
+          - ส่งบิลทาง LINE (ภาพ PNG) ถ้าลูกค้ามี LINE ID
+          - ประวัติบิลย้อนหลัง + reprint
+        implementation: "src/lib/repositories/receiptRepo.js"
+        api_endpoints:
+          - "POST /api/receipts — สร้างบิลจาก orderId"
+          - "GET /api/receipts/[id] — ดึงข้อมูลบิล"
+          - "GET /api/receipts?orderId= — ดึงบิลตาม order"
+          - "POST /api/receipts/[id]/print — trigger print job"
+
+  # ── MODULE 7: COURSE ENROLLMENT ───────────────────────
+
+  - module: "Course Enrollment"
+    ui_tab: ["CourseEnrollmentPanel"]
+    status: "✅ Working"
+    adr: "ADR-037"
+    features:
+      - name: "FR7.1: Course Enrollment"
+        status: "✅ Working"
+        description: "createEnrollment + package expansion"
+        implementation: "src/lib/repositories/enrollmentRepo.js"
+
+      - name: "FR7.2: Hours Tracking & Certification"
+        status: "✅ Working"
+        description: |
+          updateHours() + cert threshold:
+          30h → Basic Cert · 111h → Professional · 201h → Master
+        cert_levels: [30, 111, 201]
+
+      - name: "FR7.3: Class Attendance"
+        status: "✅ Working"
+        description: "ClassAttendance model — เชื่อม EnrollmentItem กับ CourseSchedule"
+
+      - name: "FR7.4: Package Enrollment"
+        status: "✅ Working"
+        description: |
+          PackageEnrollment + course swap (1 ครั้ง/enrollment)
+          swapUsedAt non-null = ใช้สิทธิ์ไปแล้ว → 409
+        implementation: "src/lib/repositories/packageRepo.js"
+
+  # ── MODULE 8: SCHEDULE CALENDAR ───────────────────────
+
+  - module: "Course Schedule Calendar"
+    ui_tab: ["ScheduleCalendar"]
+    status: "✅ Working"
+    features:
+      - name: "FR8.1: Schedule CRUD"
+        status: "✅ Working"
+        implementation: "src/lib/repositories/scheduleRepo.js"
+
+      - name: "FR8.2: Calendar View"
+        status: "✅ Working"
+        description: "List + Week + Calendar views, multi-day course spanning"
+        implementation: "src/components/ScheduleCalendar.js"
+
+      - name: "FR8.3: Complete Session + Stock Deduction"
+        status: "✅ Working"
+        description: |
+          completeSessionWithStockDeduction() — prisma.$transaction
+          ตัดสต็อก RecipeIngredient × studentCount
+          ตัดสต็อก RecipeEquipment per session (ไม่คูณ)
+        implementation: "src/app/api/schedules/[id]/complete/route.js"
+
+  # ── MODULE 9: KITCHEN OPS ─────────────────────────────
+
+  - module: "Kitchen Operations"
+    ui_tab: ["KitchenStockPanel"]
+    status: "✅ Working"
+    features:
+      - name: "FR9.1: Ingredient Stock Management"
+        status: "✅ Working"
+        description: "CRUD ingredients, low-stock filter, inline edit"
+        implementation: "src/lib/repositories/kitchenRepo.js"
+
+      - name: "FR9.2: Bill of Materials (BOM)"
+        status: "✅ Working"
+        description: "CourseBOM — qty per person per course"
+
+      - name: "FR9.3: Purchase Request (Auto-Generate)"
+        status: "✅ Working"
+        description: "Auto-generate PR จาก BOM เมื่อสต็อกต่ำกว่า min"
+        id_format: "PR-YYYYMMDD-SERIAL"
+
+      - name: "FR9.4: Recipe Management"
+        status: "✅ Working"
+        description: "Recipe + RecipeIngredient + RecipeEquipment (stock-tracked)"
+        implementation: "src/components/RecipePage.js"
+
+  # ── MODULE 10: ASSET MANAGEMENT ───────────────────────
+
+  - module: "Asset Management"
+    ui_tab: ["AssetPanel"]
+    status: "✅ Working"
+    features:
+      - name: "FR10.1: Asset CRUD"
+        status: "✅ Working"
+        description: "Asset grid, category/status filter, create+edit modal"
+        implementation: "src/lib/repositories/assetRepo.js"
+        categories: ["KITCHEN", "EQUIPMENT", "VEHICLE", "BUILDING", "IT", "GENERAL"]
+        statuses: ["ACTIVE", "MAINTENANCE", "RETIRED"]
+
+      - name: "FR10.2: Asset Assignment"
+        status: "✅ Working"
+        description: "Asset.assignedToId → Employee"
+
+  # ── MODULE 11: PACKAGE MANAGEMENT ─────────────────────
+
+  - module: "Package Management"
+    ui_tab: ["PackagePage"]
+    status: "✅ Working"
+    features:
+      - name: "FR11.1: Package CRUD"
+        status: "✅ Working"
+        description: "Package + PackageCourse (swap groups) + PackageGift"
+        implementation: "src/components/PackagePage.js"
+
+      - name: "FR11.2: Package Enrollment + Swap"
+        status: "✅ Working"
+        description: "createPackageEnrollment, swapCourseInEnrollment (1 ครั้ง)"
+        endpoint: "POST /api/packages/[id]/swap"
+
+  # ── MODULE 12: GOOGLE SHEETS SYNC ─────────────────────
+
+  - module: "Google Sheets Integration"
+    status: "✅ Working"
+    adr: "ADR-036"
+    description: "Google Sheets เป็น SSOT สำหรับ master data"
+    features:
+      - name: "FR12.1: Master Data Sync (CSV)"
+        status: "✅ Working"
+        description: "Sync courses/ingredients/BOM/assets จาก Sheets CSV URL"
+        implementation: "src/app/api/sheets/sync-master-data/route.js"
+        env_vars:
+          - SHEET_COURSES_URL
+          - SHEET_INGREDIENTS_URL
+          - SHEET_BOM_URL
+          - SHEET_ASSETS_URL
+
+  # ── MODULE 13: NOTIFICATION RULES ─────────────────────
+
+  - module: "Notification Rules"
+    status: "✅ Working"
+    features:
+      - name: "FR13.1: Rule Management"
+        status: "✅ Working"
+        description: "GET/POST/DELETE notification rules"
+        implementation: "src/app/api/notifications/rules/route.js"
+        events: ["MESSAGE_RECEIVED", "CONVERSATION_CLOSED", "INACTIVITY"]
+
+      - name: "FR13.2: LINE Push via QStash"
+        status: "✅ Working"
+        description: "QStash HTTP queue → /api/workers/notification → pushMessage() → LINE Messaging API"
+        implementation: "src/app/api/workers/notification/route.js"
+        note: "v0.27.0 (ADR-040): เปลี่ยนจาก BullMQ worker เป็น QStash serverless"
+
+  # ── MODULE 14: TASK MANAGEMENT ────────────────────────
+
+
+  # ── MODULE 15: PAYMENT & SLIP OCR ─────────────────────
+
+  - module: "Payment & Slip OCR (Chat-First Revenue)"
+    status: "✅ Working"
+    adr: "ADR-039"
+    description: "ใช้สลิปโอนเงินในแชทเป็น Source of Truth ของ Revenue — แทน Meta estimated"
+    features:
+      - name: "FR15.1: Slip OCR via Gemini Vision"
+        status: "✅ Working"
+        description: |
+          parseSlip(imageUrl) → { isSlip, confidence, amount, date, refNumber, bankName }
+          threshold: confidence ≥ 0.80 ถึงสร้าง Transaction อัตโนมัติ
+        implementation: "src/lib/slipParser.js"
+
+      - name: "FR15.2: Webhook Slip Detection"
+        status: "✅ Working"
+        description: "FB + LINE webhook detect attachmentType=image → fire-and-forget OCR (NFR1 ครบ)"
+        implementation: "src/app/api/webhooks/facebook/route.js, src/app/api/webhooks/line/route.js"
+
+      - name: "FR15.3: Payment Repository"
+        status: "✅ Working"
+        description: |
+          createPendingFromSlip → PENDING Transaction
+          verifyPayment(id, employeeId) → VERIFIED + Order CLOSED
+          getMonthlyRevenue → fromAds vs organic split
+        implementation: "src/lib/repositories/paymentRepo.js"
+
+      - name: "FR15.4: Employee Verify Flow"
+        status: "✅ Working"
+        description: "PATCH /api/payments/verify/[id] — พนักงาน verify สลิปก่อน Revenue นับ"
+        endpoint: "PATCH /api/payments/verify/[id]"
+
+      - name: "FR15.5: REQ-07 First Touch Ad Attribution"
+        status: "✅ Working"
+        description: |
+          Conversation.firstTouchAdId — บันทึก referral.ad_id จาก FB webhook เฉพาะตอน CREATE (immutable)
+          getMonthlyRevenue ใช้ firstTouchAdId แยก Ads vs Organic ROAS
+        note: "historical conversations ก่อน v0.26.0 จะมี firstTouchAdId = null (= organic)"
+
+  # ── MODULE 16: INGREDIENT LOT TRACKING ────────────────
+
+  - module: "Ingredient Lot Tracking (FEFO)"
+    status: "✅ Working"
+    adr: "ADR-038"
+    description: "ติดตาม stock batch-level ด้วย Lot ID + FEFO deduction"
+    features:
+      - name: "FR16.1: Lot Management"
+        status: "✅ Working"
+        description: |
+          IngredientLot — LOT-YYYYMMDD-XXX, receivedQty, remainingQty, expiresAt
+          status: ACTIVE | CONSUMED | EXPIRED | RECALLED
+        implementation: "src/lib/repositories/kitchenRepo.js"
+
+      - name: "FR16.2: FEFO Stock Deduction"
+        status: "✅ Working"
+        description: |
+          completeSessionWithStockDeduction() ตัดจาก Lot เรียง expiresAt ASC (First Expired First Out)
+          remainder logging ใน StockDeductionLog — full audit trail
+        implementation: "src/lib/repositories/scheduleRepo.js"
+
+      - name: "FR16.3: Lot API"
+        status: "✅ Working"
+        endpoints:
+          - "GET/POST /api/kitchen/lots"
+          - "GET/PATCH /api/kitchen/lots/[id]"
+
+  # ── MODULE 17: TASK MANAGEMENT ────────────────────────
+
+  - module: "Task Management"
+    ui_tab: "TaskPanel"
+    status: "✅ Working"
+    version: "v2.1.0 (Phase 37)"
+    features:
+      - name: "FR17.1: Task CRUD"
+        status: "✅ Working"
+        description: "Follow-up, Call, Email, Meeting tasks — Assignee + Due Date + Priority"
+        types: ["FOLLOW_UP", "CALL", "EMAIL", "MEETING", "DEMO"]
+        priorities:
+          - "L1 · Critical"
+          - "L2 · Important"
+          - "L3 · Routine"
+          - "L4 · Deferrable"
+          - "L5 · Optional"
+        statuses: ["PENDING", "URGENT", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
+        implementation: "src/components/TaskPanel.js, src/app/api/tasks/"
+
+      - name: "FR17.2: Task Type System (3 Types)"
+        status: "✅ Working"
+        description: |
+          งานวันเดียว (SINGLE) — มี time picker (timeStart/timeEnd HH:MM)
+          งานต่อเนื่อง (RANGE) — มี startDate → dueDate spanning
+          โปรเจค (PROJECT) — มี deadline + milestone editor
+        task_types:
+          SINGLE:
+            label: "งานวันเดียว"
+            fields: ["timeStart", "timeEnd"]
+            calendar: "แสดงเป็น single-day event พร้อม time badge"
+          RANGE:
+            label: "งานต่อเนื่อง"
+            fields: ["startDate", "dueDate"]
+            calendar: "แสดงเป็น spanning bar สีม่วงข้ามวัน (WeeklyView + CalendarView)"
+          PROJECT:
+            label: "โปรเจค"
+            fields: ["startDate", "dueDate", "milestones"]
+            calendar: "spanning bar สีทอง + ◆ milestone markers บนวันที่"
+        implementation: "src/components/TaskPanel.js (TaskModal, TaskCard, WeeklyView, CalendarView)"
+
+      - name: "FR17.3: Milestone Editor (PROJECT only)"
+        status: "✅ Working"
+        description: |
+          Add/remove milestone rows; แต่ละ milestone มี:
+          - type: brief | review | meeting | submit | other
+          - title: ชื่อ milestone
+          - date: ISO date string
+        storage: "Json milestones = [{id, title, date, type}] ใน DB"
+        calendar_display: "◆ diamond marker บน milestone dates + tooltip ใน selected-day panel"
+
+      - name: "FR17.4: Calendar / Weekly View Spanning"
+        status: "✅ Working"
+        description: |
+          WeeklyView: RANGE/PROJECT tasks แสดงเป็น colored spanning bars
+          CalendarView: colored bars ใน grid cells + selected-day panel แสดง detail
+          taskSpansDay() helper: เปรียบเทียบ ISO date string (dk >= startDate && dk <= dueDate)
+        known_gotchas:
+          - "WeeklyView ใช้ CSS -ml-2 bleed — เห็น gap เล็กน้อยระหว่าง cells (CSS grid limitation)"
+          - "timezone offset อาจทำให้ first/last day off-by-1 (ISO string comparison)"
+
+      - name: "FR17.5: Notion Sync (Bidirectional)"
+        status: "✅ Working"
+        description: |
+          pushTaskToNotion() — ส่ง taskType, startDate, timeStart/timeEnd, milestones text summary
+          pullTasksFromNotion() — อ่าน taskType, startDate, Time string → parse HH:MM / HH:MM–HH:MM
+        notion_columns:
+          - "Task (title)"
+          - "Status (select)"
+          - "Priority (select)"
+          - "Due Date (date)"
+          - "Assignee (person)"
+          - "Task Type (select) — งานวันเดียว | งานต่อเนื่อง | โปรเจค"
+          - "Start Date (date)"
+          - "Time (rich_text) — HH:MM หรือ HH:MM–HH:MM"
+          - "Milestones (rich_text) — plain text summary"
+        known_gotchas:
+          - "Milestones push เป็น plain text — pull กลับมาจะไม่ restore JSON (set null)"
+          - "column names ต้องตรง exact — push fail แบบ silent ถ้า column ไม่ตรง"
+        implementation: "src/lib/repositories/notionRepo.js"
+
+      - name: "FR17.6: Task API"
+        status: "✅ Working"
+        endpoints:
+          - "GET/POST /api/tasks — list + create (รับ taskType/startDate/timeStart/timeEnd/milestones)"
+          - "GET/PATCH/DELETE /api/tasks/[id]"
+        db_fields_added_v2_1_0:
+          - "taskType String @default('SINGLE') — SINGLE | RANGE | PROJECT"
+          - "startDate DateTime? — สำหรับ RANGE/PROJECT"
+          - "timeStart String? — HH:MM สำหรับ SINGLE"
+          - "timeEnd String? — HH:MM สำหรับ SINGLE"
+          - "milestones Json? — [{id,title,date,type}] สำหรับ PROJECT"
+          - "completedAt DateTime? — บันทึกเวลาเสร็จ"
+          - "notionId String? — link กับ Notion page"
+
+  # ── MODULE 18: PROCUREMENT LIFECYCLE ─────────────────
+
+  - module: "Procurement Lifecycle"
+    ui_tab: ["ProcurementDashboard", "POList"]
+    status: "✅ Working"
+    features:
+      - name: "FR18.1: Supplier Master Data"
+        status: "✅ Working"
+        description: "Supplier CRUD with taxId and bankAccount support"
+
+      - name: "FR18.2: Class BOM Calculation"
+        status: "✅ Working"
+        description: "Calculate shortfall based on confirmed students across multiple schedule days (Cohort)"
+        implementation: "procurementRepo.calculateClassBOM(classId)"
+
+      - name: "FR18.3: Purchase Order Lifecycle"
+        status: "✅ Working"
+        description: |
+          DRAFT -> REQUEST_REVIEW -> APPROVED/REJECTED -> ORDERING -> ORDERED -> RECEIVED -> CLOSED
+        id_format: "PO-YYYYMMDD-SERIAL"
+
+      - name: "FR18.4: Multi-stage Approval"
+        status: "✅ Working"
+        description: "Chef approval (APPROVED/REJECTED) + Purchasing acceptance (ORDERING)"
+
+      - name: "FR18.5: Goods Received (GRN)"
+        status: "✅ Working"
+        description: "Partial/Full receiving with auto-stock increment (Ingredient.currentStock)"
+        id_format: "GRN-YYYYMMDD-SERIAL"
+
+      - name: "FR18.6: Financial Operations"
+        status: "✅ Working"
+        description: "Advances (Employee reimbursement), Credit Notes, and Returns management"
+
+  # ── MODULE 19: INVENTORY CONTROL ─────────────────────
+
+  - module: "Advanced Inventory Control"
+    ui_tab: ["InventoryDashboard"]
+    status: "✅ Working"
+    features:
+      - name: "FR19.1: Multi-Warehouse Support"
+        status: "✅ Working"
+        description: "Warehouse CRUD (WH-CODE) and location tracking"
+
+      - name: "FR19.2: Stock Movements"
+        status: "✅ Working"
+        description: "Audit trail for RECEIVE, ISSUE, TRANSFER, ADJUSTMENT with transaction logging"
+
+      - name: "FR19.3: Physical Stock Count"
+        status: "✅ Working"
+        description: "Blind count vs systemQty with auto-adjustment on completion"
+        id_format: "CNT-YYYYMMDD-SERIAL"
+
+      - name: "FR19.4: Barcode Integration"
+        status: "✅ Working"
+        description: "Register EAN13 barcodes and lookup products via scanner"
+
+  # ── MODULE 20: ADS OPTIMIZATION ──────────────────────
+
+  - module: "Ads Optimization (Write)"
+    ui_tab: ["AdsOptimizePanel"]
+    status: "✅ Working"
+    adr: "ADR-045"
+    features:
+      - name: "FR20.1: Campaign/Ad Management"
+        status: "✅ Working"
+        description: "Pause, Resume, and Duplicate campaigns directly from CRM UI"
+
+      - name: "FR20.2: Budget & Bid Control"
+        status: "✅ Working"
+        description: "Real-time daily budget and bid amount updates via Meta Graph API"
+
+      - name: "FR20.3: Budget Approval Workflow"
+        status: "✅ Working"
+        description: "Requested lifetime budget changes (AdsOptimizeRequest) require Manager/Admin approval"
+
+  # ── MODULE 21: V POINT LOYALTY ───────────────────────
+
+  - module: "V Point Loyalty"
+    ui_tab: ["CustomerProfile"]
+    status: "✅ Working"
+    features:
+      - name: "FR21.1: Loyalty Tiers"
+        status: "✅ Working"
+        description: "5 tiers (Member, Silver, Gold, Platinum, Black) based on spend and learning hours"
+
+      - name: "FR21.2: Point Accumulation"
+        status: "✅ Working"
+        description: "300 V Points per 150 THB spent — auto-awarded on order verification"
+
+  # ── MODULE 22: WEB PUSH NOTIFICATIONS ────────────────
+
+  - module: "Web Push Notifications"
+    status: "✅ Working"
+    adr: "ADR-044"
+    description: "Real-time browser notifications using VAPID protocol"
+    features:
+      - name: "FR22.1: Browser Subscription"
+        status: "✅ Working"
+        description: "RBAC-guarded push subscription management via /api/push/subscribe"
+
+  # ── MODULE 23: AUTOMATED CERTIFICATION ───────────────
+
+  - module: "Automated Certification"
+    status: "✅ Working"
+    features:
+      - name: "FR23.1: Threshold Issuance"
+        status: "✅ Working"
+        description: "Auto-issue CERT-YYYYMMDD-XXX at 30h, 111h, and 201h milestones"
+
+  # ── MODULE 24: AI INBOX ASSISTANT ────────────────────
+
+  - module: "AI Inbox Assistant"
+    ui_tab: ["UnifiedInbox"]
+    status: "✅ Working"
+    features:
+      - name: "FR24.1: Context-Aware Reply"
+        status: "✅ Working"
+        description: "Generate replies using Gemini 2.0 Flash based on knowledge files and chat history"
+
+  # ── MODULE 25: DAILY CHAT INTELLIGENCE ───────────────
+
+  - module: "Daily Chat Intelligence"
+    ui_tab: ["UnifiedInbox", "IntelligenceDashboard"]
+    status: "✅ Working"
+    description: "NotebookLM-style conversation analysis and knowledge mapping"
+    features:
+      - name: "FR25.1: Automated Summary"
+        status: "✅ Working"
+        description: "Generate concise daily summaries and key takeaways from chat history"
+
+      - name: "FR25.2: Knowledge Tree Mapping"
+        status: "✅ Working"
+        description: "Visualize customer interests and pain points via Mermaid.js tree diagrams"
+        implementation: "intelligenceRepo.generateChatAnalysis(conversationId)"
+
+      - name: "FR25.3: MCP Tooling"
+        status: "✅ Working"
+        description: "AI Agent access to intelligence data via intelligence.get_chat_tree tool"
+
+  # ── MODULE 26: MULTI-TENANCY (FEAT01) ─────────────────
+
+  - module: "Multi-Tenancy Foundation"
+    status: "✅ Working"
+    adr: "ADR-056"
+    features:
+      - name: "FR26.1: Subdomain Routing"
+        status: "✅ Working"
+        description: "{slug}.zuri.app based tenant resolution via middleware"
+
+      - name: "FR26.2: Tenant Context Injection"
+        status: "✅ Working"
+        description: "Inject x-tenant-id into API/Request headers & JWT session"
+
+      - name: "FR26.3: Tenant Admin UI"
+        status: "✅ Working"
+        description: "Manage multiple school/business clients via /tenants (Admin only)"
+
+      - name: "FR26.4: Dynamic Branding (Filling)"
+        status: "✅ Working"
+        description: "TenantProvider + /api/tenant/config for logos, colors, and names"
+
+  # ── MODULE 27: CUSTOMER PROFILE (FEAT02) ──────────────
+
+  - module: "Customer Profile & Activity"
+    ui_tab: "UnifiedInbox (Right Panel)"
+    status: "✅ Working"
+    features:
+      - name: "FR27.1: Interactive Profile Tab"
+        status: "✅ Working"
+        description: "Edit lifecycle stage, contact info, and view ads attribution"
+
+      - name: "FR27.2: Lifecycle Tracking"
+        status: "✅ Working"
+        values: ["NEW", "CONTACTED", "INTERESTED", "ENROLLED", "PAID"]
+
+      - name: "FR27.3: Activity Log Timeline"
+        status: "✅ Working"
+        description: "Vertical timeline of customer-specific audit logs (createdBy, changes)"
+
+
+# ─────────────────────────────────────────────────────────
+# NON-FUNCTIONAL REQUIREMENTS
+# ─────────────────────────────────────────────────────────
+
+non_functional_requirements:
+
+  - category: "Performance & Latency"
+    requirements:
+      - name: "NFR1 — Webhook Latency"
+        description: "Webhook ตอบ Facebook < 200ms เสมอ — processEvent() fire-and-forget"
+        endpoint: "/api/webhooks/facebook"
+        status: "✅ Enforced"
+
+      - name: "NFR2 — Dashboard API Latency"
+        description: "Dashboard API < 500ms — Redis cache (ADR-034)"
+        status: "✅ Enforced"
+
+  - category: "Reliability & Integrity"
+    requirements:
+      - name: "NFR3 — BullMQ Retry"
+        description: "BullMQ retry ≥ 5 ครั้ง, exponential backoff"
+        status: "✅ Enforced"
+
+      - name: "NFR4 — Webhook Signature Validation"
+        description: "X-Hub-Signature-256 verify ทุก Facebook request"
+        status: "✅ Enforced"
+
+      - name: "NFR5 — Identity Upsert Transaction"
+        description: "Identity upsert ต้องอยู่ใน prisma.$transaction เสมอ"
+        status: "✅ Enforced"
+
+      - name: "NFR6 — Race Condition Guard"
+        description: |
+          FB Webhook: findFirst → create ต้องครอบด้วย try-catch P2002
+          ถ้า P2002 → retry findFirst เพื่อ recover
+        status: "✅ Enforced (v0.18.0)"
+
+  - category: "Code Quality"
+    requirements:
+      - name: "Error Logging"
+        description: "ห้าม catch(e) {} เงียบ — ต้อง log ทุกครั้ง"
+        format: "console.error('[ModuleName] message', error)"
+
+      - name: "Repository Pattern"
+        description: "ทุก DB operation ต้องผ่าน src/lib/repositories/ เท่านั้น"
+
+      - name: "Icon Standard (ADR-031)"
+        description: "ใช้ Lucide React เท่านั้น — ห้าม FontAwesome"
+
+  - category: "Data Integrity Rules"
+    rules:
+      - name: "Aggregation Checksum"
+        logic: "Sum(Ads.Metrics) == Campaign.Metrics"
+        description: "ตรวจ data gap จาก Meta sync"
+
+      - name: "Hourly Sync Continuity"
+        logic: "Next_Sync_Hour == Current_Sync_Hour + 1"
+
+      - name: "Differential Delta Rule"
+        logic: "Delta = Current_Total - Previous_Total; if Delta == 0 → skip write"
+
+  - category: "Reporting Calculation Formulas"
+    formulas:
+      - name: "ROAS"
+        logic: "Total Revenue / Total Spend"
+      - name: "CPA"
+        logic: "Total Spend / Total Transactions"
+      - name: "CON (Conversion Efficiency)"
+        logic: "Total Transactions / Cost Per Result (CPR)"
+
+  - category: "Multi-Tenancy & Isolation"
+    requirements:
+      - name: "NFR7 — Tenant Data Isolation"
+        description: "Zero cross-tenant leak — tenantId mandatory in all repository calls and WHERE clauses."
+        status: "✅ Enforced"
+
+      - name: "NFR8 — Tenant Branding Separation"
+        description: "UI components must use TenantProvider for all branding (logo, colors, names). No hardcoding per tenant."
+        status: "✅ Enforced"
+
+# ─────────────────────────────────────────────────────────
+# API SPECIFICATION (RESTful — Next.js App Router)
+# ─────────────────────────────────────────────────────────
+
+api_specification:
+
+  - module: "Auth"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/auth/[...nextauth]"
+        purpose: "NextAuth session management (CredentialsOnly)"
+      - method: "GET"
+        path: "/api/agent/me"
+        purpose: "ดึงข้อมูลพนักงานที่ login อยู่"
+
+  - module: "Webhooks"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/webhooks/facebook"
+        purpose: "Facebook Messenger webhook — verify + receive events"
+      - method: "POST"
+        path: "/api/webhooks/line"
+        purpose: "LINE Messaging API webhook"
+
+  - module: "Marketing"
+    endpoints:
+      - method: "GET"
+        path: "/api/marketing/campaigns"
+        purpose: "List campaigns from DB"
+      - method: "GET"
+        path: "/api/marketing/adsets"
+        purpose: "List ad sets from DB"
+      - method: "GET"
+        path: "/api/marketing/ads"
+        purpose: "List ads from DB"
+      - method: "GET"
+        path: "/api/marketing/daily"
+        purpose: "Daily metrics aggregated"
+      - method: "POST"
+        path: "/api/marketing/sync-hourly"
+        purpose: "Trigger hourly sync from Meta Graph API"
+      - method: "GET"
+        path: "/api/marketing/chat/conversations"
+        purpose: "Paginated conversation list (cursor-based)"
+      - method: "GET"
+        path: "/api/marketing/chat/messages"
+        purpose: "Messages by conversation_id"
+
+  - module: "Inbox"
+    endpoints:
+      - method: "GET"
+        path: "/api/inbox/conversations"
+        purpose: "Unified FB+LINE inbox (enriched customer data)"
+      - method: "GET/POST"
+        path: "/api/inbox/conversations/[id]/messages"
+        purpose: "Paginated messages + reply"
+
+  - module: "Customers"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/customers"
+        purpose: "List + create customers"
+      - method: "GET/PATCH"
+        path: "/api/customers/[id]"
+        purpose: "Customer detail + update (with profile & audit logging)"
+      - method: "GET"
+        path: "/api/customers/[id]/activity"
+        purpose: "Customer-specific activity log timeline"
+
+
+  - module: "Enrollments"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/enrollments"
+        purpose: "List + create enrollments"
+      - method: "GET/PATCH"
+        path: "/api/enrollments/[id]"
+        purpose: "Detail + add hours"
+
+  - module: "Schedules"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/schedules"
+        purpose: "List (upcoming/days) + create schedule"
+      - method: "GET/PATCH"
+        path: "/api/schedules/[id]"
+        purpose: "Detail + update"
+      - method: "POST"
+        path: "/api/schedules/[id]/complete"
+        purpose: "Complete session + real-time stock deduction"
+
+  - module: "Kitchen"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/kitchen/ingredients"
+        purpose: "List (lowStockOnly filter) + create ingredient"
+      - method: "PATCH"
+        path: "/api/kitchen/ingredients/[id]"
+        purpose: "Update ingredient / stock"
+      - method: "GET/POST"
+        path: "/api/kitchen/purchase"
+        purpose: "List + create purchase requests"
+      - method: "PATCH"
+        path: "/api/kitchen/purchase/[id]"
+        purpose: "Update PR status"
+
+  - module: "Assets"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/assets"
+        purpose: "List (category/status/search) + create"
+      - method: "GET/PATCH"
+        path: "/api/assets/[id]"
+        purpose: "Detail + update"
+
+  - module: "Recipes"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/recipes"
+        purpose: "List + create recipes"
+      - method: "GET/PATCH"
+        path: "/api/recipes/[id]"
+        purpose: "Detail + update"
+
+  - module: "Packages"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/packages"
+        purpose: "List + create packages"
+      - method: "GET/PATCH"
+        path: "/api/packages/[id]"
+        purpose: "Detail + update"
+      - method: "POST"
+        path: "/api/packages/[id]/swap"
+        purpose: "Swap course in enrollment (1 ครั้ง, 409 ถ้าใช้แล้ว)"
+      - method: "GET/POST"
+        path: "/api/packages/enrollments"
+        purpose: "List by customerId + create package enrollment"
+
+  - module: "Notifications"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/notifications/rules"
+        purpose: "List + create/upsert notification rules"
+      - method: "DELETE"
+        path: "/api/notifications/rules/[id]"
+        purpose: "Delete rule by UUID or ruleId"
+
+  - module: "Payments"
+    endpoints:
+      - method: "GET"
+        path: "/api/payments/pending"
+        purpose: "List pending slips รอ employee verify"
+      - method: "PATCH"
+        path: "/api/payments/verify/[id]"
+        purpose: "Verify slip → slipStatus=VERIFIED + Order CLOSED"
+
+  - module: "Kitchen Lots"
+    endpoints:
+      - method: "GET/POST"
+        path: "/api/kitchen/lots"
+        purpose: "List lots (filter: status, ingredientId, expiring=30) + create lot"
+      - method: "GET/PATCH"
+        path: "/api/kitchen/lots/[id]"
+        purpose: "Lot detail + update status/remainingQty"
+
+  - module: "QStash Worker"
+    endpoints:
+      - method: "POST"
+        path: "/api/workers/notification"
+        purpose: "Upstash QStash serverless worker — verify signature + LINE push"
+        note: "ห้ามเรียกตรง ต้องผ่าน QStash เท่านั้น (signature required)"
+
+  - module: "Tenant"
+    endpoints:
+      - method: "GET"
+        path: "/api/tenant/config"
+        purpose: "Fetch tenant branding (logo, name, colors) for dynamic UI"
+
+
+  - module: "Sheets Sync"
+    endpoints:
+      - method: "POST"
+        path: "/api/sheets/sync-master-data"
+        purpose: "Sync courses/ingredients/BOM/assets from Google Sheets CSV"
+
+# ─────────────────────────────────────────────────────────
+# REFERENCE
+# ─────────────────────────────────────────────────────────
+
+reference:
+  id_standards: "id_standards.yaml"
+  schema: "prisma/schema.prisma"
+  adr_directory: "docs/adr/"
+  changelog: "CHANGELOG.md"
+  goal: "GOAL.md"

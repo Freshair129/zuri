@@ -1,0 +1,66 @@
+# FEAT-002_CustomerProfile.yaml
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+# Language: English Only (Maximum Token Efficiency)
+
+metadata:
+  id: FEAT-002
+  name: "Customer 360 & Profile Management"
+  module: "MOD-CRM"
+  status: "stable"
+  version: "2.0.0"
+  author: "AGT-ATG-001 (RWANG)"
+  related_spec: "gks/02_features/FEAT--customer-profile.md"
+
+architectural_pattern:
+  pattern: "Repository with Audit Trail"
+  component: "CustomerRepository"
+  integration: ["Supabase (Auth/DB)", "FB/Meta Graph", "LINE Messaging"]
+
+runtime_logic:
+  identity_resolution:
+    trigger: "On incoming conversation or lead form submission"
+    logic_flow:
+      - "Sanitize phone number to E.164 format"
+      - "Query DB for existing customer with same phone + tenantId"
+      - "If match found -> Bind new platform ID (FB/LINE) to existing record"
+      - "If NO match -> Create new Customer record + CustomerProfile"
+
+  lifecycle_transition:
+    states: ["NEW", "CONTACTED", "INTERESTED", "ENROLLED", "PAID"]
+    actions:
+      - "Staff manually selects status"
+      - "System auto-updates on successful Enrollment (to ENROLLED)"
+      - "System auto-updates on payment payment confirmed (to PAID)"
+
+  audit_trail:
+    mechanism: "Internal Middleware in Repo"
+    data_captured: ["actorId", "action", "before_state", "after_state", "timestamp"]
+
+data_flow:
+  fetch_360:
+    endpoint: "GET /api/customers/[id]"
+    aggregation: ["Customer", "Profile", "AuditLogs", "Orders", "Enrollments"]
+
+security_matrix:
+  default_policy: "OWNER_OR_MANAGER_ONLY"
+  rules:
+    - role: "SLS/AGT"
+      resource: "Customer"
+      can: ["READ", "UPDATE"]
+      condition: "Is owner of lead"
+    - role: "MGR/ADM"
+      resource: "Customer"
+      can: ["CREATE", "READ", "UPDATE", "DELETE"]
+      condition: "Global access"
+
+geography:
+  tables:
+    - "Customer"
+    - "CustomerProfile"
+    - "AuditLog"
+  repository_file: "src/repositories/customer.repo.ts"
+
+verification:
+  automated:
+    - "Unit test: Identity Resolution with duplicate phone across platforms"
+    - "Integration test: Verify AuditLog entry after status update"

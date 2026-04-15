@@ -1,0 +1,94 @@
+# FEAT-024_EmployeeCard.yaml
+# Spec Reference: FEAT20-EMPLOYEE-CARD.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-024
+  spec_id: FEAT20
+  name: "Interactive Employee Performance Card Deck"
+  module: "MOD-CRM"
+  status: "partial"
+  version: "0.9.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT20-EMPLOYEE-CARD.md"
+  depends_on: ["FEAT-005_CRM", "FEAT-001_MultiTenant"]
+  note: "Component exists (EmployeeCardInteractive.js) — blueprint formalizes the spec"
+
+architectural_pattern:
+  pattern: "KPI Aggregation API + Animated Card Deck UI"
+  caching: "Redis (employee KPI: 60s TTL)"
+  realtime: "Pusher (status toggle sync across viewers)"
+  animation: "framer-motion (≥60 FPS swipe gestures)"
+  nfr:
+    NFR_DECK_1: "≥60 FPS card transitions"
+    NFR_DECK_2: "KPI display ≤800ms after card change"
+    NFR_DECK_3: "Touch swipe on tablet/mobile"
+
+data_logic:
+  kpi_aggregation:
+    worker: "GET /api/employees/stats"
+    fields:
+      totalCustomers: "COUNT(customers WHERE assignedEmployeeId = emp.id)"
+      totalSales: "SUM(orders.total WHERE customer.assignedEmployeeId = emp.id AND status=COMPLETED)"
+      growthPercent: "((currentMonth - prevMonth) / prevMonth) * 100"
+      tenure: "DATEDIFF(now, employee.hiredAt) in days"
+      performanceScore: "(totalSales * 0.7) + (totalCustomers * 0.3) — normalized 0-100"
+    cache_key: "emp:stats:{tenantId}"
+    cache_ttl: 60
+
+  card_interactions:
+    swipe_left_right: "Navigate between employee cards"
+    hover: "Card lifts (translateY: -20px, scale: 1.05)"
+    click: "Expand to full employee detail"
+
+  status_toggle:
+    endpoint: "PATCH /api/employees/{id}"
+    field: "employee.status: ACTIVE | INACTIVE | ON_LEAVE"
+    realtime: "Pusher event: tenant:{tenantId}:employee:status"
+
+api_contracts:
+  - endpoint: "GET /api/employees/stats"
+    description: "All employees with computed KPIs (cached)"
+    returns: "Employee[] with totalCustomers, totalSales, growthPercent, tenure, performanceScore"
+    cache: "Redis emp:stats:{tenantId} — 60s TTL"
+    auth: "MGR/ADM"
+
+  - endpoint: "PATCH /api/employees/{id}"
+    description: "Update employee (status, info)"
+    payload: { status: "ACTIVE|INACTIVE|ON_LEAVE", ...fields }
+    side_effects: ["Pusher: employee:status event", "Redis cache bust"]
+    auth: "MGR/ADM"
+
+security_matrix:
+  rules:
+    - role: "MGR/ADM"
+      resource: "EmployeeCard"
+      can: ["READ", "TOGGLE_STATUS"]
+    - role: "STF"
+      resource: "EmployeeCard"
+      can: ["READ_OWN"]
+      note: "Can view their own card only"
+
+geography:
+  tables:
+    existing:
+      - "Employee"
+      - "Customer (assignedEmployeeId)"
+      - "Order"
+  components:
+    existing:
+      - "src/components/crm/EmployeeCardInteractive.js"
+      - "src/components/ui/EmployeeCard.jsx"
+    new:
+      - "src/components/employees/CardDeckView.jsx"
+      - "src/components/employees/KPIBadge.jsx"
+  pages:
+    existing:
+      - "src/app/(dashboard)/employees/page.jsx"
+  api_routes:
+    existing:
+      - "src/app/api/employees/stats/route.js"
+      - "src/app/api/employees/[id]/route.js"
+  lib:
+    existing:
+      - "src/lib/kpi/employeeStats.js"

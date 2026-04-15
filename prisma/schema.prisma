@@ -1,0 +1,1621 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// Multi-Tenant Foundation (ADR-056)
+// ============================================
+
+model Tenant {
+  id                String   @id @default(uuid())
+  tenantSlug        String   @unique @map("tenant_slug")
+  tenantName        String   @map("tenant_name")
+  lineOaId          String?  @map("line_oa_id")
+  fbPageId          String?  @map("fb_page_id")
+  fbPageToken       String?  @map("fb_page_token") // AES-256-CBC encrypted
+  lineChannelToken  String?  @map("line_channel_token") // AES-256-CBC encrypted
+  lineChannelSecret String?  @map("line_channel_secret") // AES-256-CBC encrypted
+  plan              String   @default("STARTER")
+  isActive          Boolean  @default(true) @map("is_active")
+  // Per-tenant branding & config (FEAT01 MT-P4): vatRate, currency, timezone, brandColor, logoUrl
+  config            Json     @default("{}") @map("config")
+  ownerEmployeeId   String?  @map("owner_employee_id") // FEAT21: current OWNER employee id
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  employees          Employee[]
+  customers          Customer[]
+  conversations      Conversation[]
+  orders             Order[]
+  tasks              Task[]
+  adAccounts         AdAccount[] // ZDEV-TSK-20260409-053
+  integrationConfigs IntegrationConfig[] // FEAT17 Accounting Platform
+  marketingConfig    TenantMarketingConfig? // FEAT15 Marketing AI
+
+  @@map("tenants")
+}
+
+// ============================================
+// DOMAIN: Auth & Employee
+// ============================================
+
+model Employee {
+  id           String    @id @default(uuid())
+  employeeId   String    @unique @map("employee_id")
+  tenantId     String    @map("tenant_id")
+  firstName    String    @map("first_name")
+  lastName     String    @map("last_name")
+  nickName     String?   @map("nick_name")
+  email        String    @unique
+  phone        String?
+  lineUserId   String?   @map("line_user_id")
+  department   String?
+  jobTitle     String?   @map("job_title")
+  role         String    @default("STF")
+  roles        String[]  @default(["STF"])
+  status       String    @default("ACTIVE")
+  passwordHash String    @map("password_hash")
+  hiredAt      DateTime? @map("hired_at")
+  lastLoginAt  DateTime? @map("last_login_at")
+  lastLoginIp  String?   @map("last_login_ip") // ZDEV-TSK-20260410-025
+  deviceId     String?   @map("device_id")     // ZDEV-TSK-20260410-025
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("employees")
+}
+
+// ============================================
+// DOMAIN: Session Management (ZDEV-TSK-20260410-025)
+// ============================================
+
+model ActiveSession {
+  id         String   @id @default(uuid())
+  sessionId  String   @unique // jti in JWT
+  employeeId String   @map("employee_id")
+  tenantId   String   @map("tenant_id")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent") @db.Text
+  deviceId   String?  @map("device_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([employeeId])
+  @@map("active_sessions")
+}
+
+
+// ============================================
+// DOMAIN: Customer CRM
+// ============================================
+
+model Customer {
+  id             String    @id @default(uuid())
+  customerId     String    @unique @map("customer_id")
+  tenantId       String    @map("tenant_id")
+  name           String? // display name (manual create / override)
+  status         String    @default("Active")
+  membershipTier String    @default("MEMBER") @map("membership_tier")
+  lifecycleStage String    @default("NEW") @map("lifecycle_stage")
+  tags           String[]  @default([])
+  email          String?
+  phonePrimary   String?   @map("phone_primary")
+  phoneSecondary String?   @map("phone_secondary")
+  lineId         String?   @map("line_id")
+  facebookId     String?   @unique @map("facebook_id")
+  facebookName   String?   @map("facebook_name")
+  assigneeId     String?   @map("assignee_id") // Employee.id responsible for this customer
+  originId       String?   @map("origin_id")
+  mergedInto     String?   @map("merged_into") // primary customer id when this is a secondary
+  walletBalance  Float     @default(0) @map("wallet_balance")
+  walletPoints   Int       @default(0) @map("wallet_points")
+  intentScore    Int       @default(0) @map("intent_score")
+  churnScore     Int       @default(0) @map("churn_score")
+  intelligence   Json?
+  deletedAt      DateTime? @map("deleted_at") // soft delete
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id])
+  conversations Conversation[]
+  orders        Order[]
+  enrollments   Enrollment[]
+  profile       CustomerProfile?
+  insight       CustomerInsight?
+  stageHistory  CustomerStageHistory[]
+  activities    CustomerActivity[]
+
+  @@index([tenantId])
+  @@index([phonePrimary])
+  @@index([lifecycleStage])
+  @@index([deletedAt])
+  @@map("customers")
+}
+
+// Tracks every lifecycle stage transition with timestamp + actor
+model CustomerStageHistory {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  customerId String   @map("customer_id")
+  fromStage  String?  @map("from_stage")
+  toStage    String   @map("to_stage")
+  changedBy  String?  @map("changed_by") // Employee.id
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_stage_history")
+}
+
+// Unified activity timeline for a customer (conversations, orders, stage changes, notes)
+model CustomerActivity {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  customerId String   @map("customer_id")
+  type       String // CONVERSATION | ORDER | STAGE_CHANGE | TAG_CHANGE | NOTE | ENROLLMENT
+  refId      String?  @map("ref_id") // id of the referenced entity
+  payload    Json     @default("{}") // activity-specific data
+  actorId    String?  @map("actor_id") // Employee.id who caused the event
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([type])
+  @@map("customer_activities")
+}
+
+model CustomerProfile {
+  id             String    @id @default(uuid())
+  customerId     String    @unique @map("customer_id")
+  gender         String?
+  ageRange       String?   @map("age_range")
+  hasChildren    Boolean?  @map("has_children")
+  occupation     String?
+  educationLevel String?   @map("education_level")
+  location       String?
+  cookingLevel   String?   @map("cooking_level")
+  motivation     String[]  @default([])
+  budgetSignal   String?   @map("budget_signal")
+  inferenceCount Int       @default(0) @map("inference_count")
+  lastInferredAt DateTime? @map("last_inferred_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("customer_profiles")
+}
+
+model CustomerInsight {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  customerId     String   @unique @map("customer_id")
+  interests      String[] @default([])
+  objections     String[] @default([])
+  commStyle      String?  @map("comm_style")
+  keyFacts       String[] @default([]) @map("key_facts")
+  summary        String?  @db.Text
+  contactPref    String?  @map("contact_pref")
+  manualOverride Json?    @map("manual_override")
+  enrichedAt     DateTime @default(now()) @map("enriched_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("customer_insights")
+}
+
+model TenantCRMPattern {
+  id             String   @id @default(uuid())
+  tenantId       String   @unique @map("tenant_id")
+  topObjections  Json     @default("[]") @map("top_objections")
+  topInterests   Json     @default("[]") @map("top_interests")
+  conversionTips Json     @default("[]") @map("conversion_tips")
+  bestAdSegments Json?    @map("best_ad_segments")
+  computedAt     DateTime @default(now()) @map("computed_at")
+
+  @@map("tenant_crm_patterns")
+}
+
+// ============================================
+// DOMAIN: Inbox & Conversations
+// ============================================
+
+model Conversation {
+  id             String   @id @default(uuid())
+  conversationId String   @unique @map("conversation_id")
+  tenantId       String   @map("tenant_id")
+  customerId     String?  @map("customer_id")
+  participantId  String?  @map("participant_id")
+  channel        String   @default("facebook")
+  firstTouchAdId String?  @map("first_touch_ad_id")
+  assigneeId     String?  @map("assignee_id")
+  status         String   @default("open")
+  agentMode      Boolean  @default(false) @map("agent_mode") // M4-A2: AI agent auto-reply mode
+  agentTurnCount Int      @default(0) @map("agent_turn_count") // M4-A2: # of consecutive AI replies
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant                 @relation(fields: [tenantId], references: [id])
+  customer Customer?              @relation(fields: [customerId], references: [id])
+  messages Message[]
+  analyses ConversationAnalysis[]
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  messageId      String   @unique @map("message_id")
+  conversationId String   @map("conversation_id")
+  sender         String
+  content        String?  @db.Text
+  attachments    Json?
+  responderId    String?  @map("responder_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("messages")
+}
+
+// ============================================
+// DOMAIN: Orders & Payments
+// ============================================
+
+model Order {
+  id               String    @id @default(uuid())
+  orderId          String    @unique @map("order_id")
+  tenantId         String    @map("tenant_id") // CRITICAL: multi-tenant isolation
+  customerId       String?   @map("customer_id") // nullable — walk-in customers
+  tableId          String?   @map("table_id") // PosTable.id (onsite orders)
+  guestCount       Int       @default(1) @map("guest_count") // Number of customers
+  extraSeats       Int       @default(0) @map("extra_seats") // Number of extra seats/stools
+  isMerged         Boolean   @default(false) @map("is_merged") // Part of a merged table order
+  mergeGroupId     String?   @map("merge_group_id") // ID for grouped tables
+  closedById       String?   @map("closed_by_id") // Employee.id
+  conversationId   String?   @map("conversation_id")
+  status           String    @default("PENDING") // PENDING | PAID | VOID | REFUNDED
+  orderType        String    @default("TAKEAWAY") @map("order_type") // ONSITE | TAKEAWAY | ONLINE | DELIVERY
+  subtotalAmount   Float     @default(0) @map("subtotal_amount")
+  discountAmount   Float     @default(0) @map("discount_amount")
+  vatAmount        Float     @default(0) @map("vat_amount")
+  serviceCharge    Float     @default(0) @map("service_charge")
+  totalAmount      Float     @default(0) @map("total_amount")
+  paidAmount       Float     @default(0) @map("paid_amount")
+  paymentMethod    String?   @map("payment_method") // CASH | QR | CARD | CREDIT
+  cashReceived     Float?    @map("cash_received") // for change calculation
+  notes            String?   @db.Text
+  date             DateTime  @default(now())
+  // M4 Feature A3: AI Sales Closer — Human Gate fields (ZDEV-TSK-20260410-013)
+  createdBy        String?   @map("created_by") // 'AI' | null (human-created)
+  requiresApproval Boolean   @default(false) @map("requires_approval") // AI orders > ฿5,000 need OWNER review
+  approvedById     String?   @map("approved_by_id") // Employee.id who approved
+  approvedAt       DateTime? @map("approved_at") // Timestamp of approval
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  table        PosTable?     @relation(fields: [tableId], references: [id])
+  items        OrderItem[]
+  transactions Transaction[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([date])
+  @@index([requiresApproval])
+  @@map("orders")
+}
+
+// Order line items (replaces JSON items field — normalized for reporting)
+model OrderItem {
+  id            String  @id @default(uuid())
+  orderId       String  @map("order_id")
+  tenantId      String  @map("tenant_id")
+  productId     String? @map("product_id") // Product.id — null for custom items
+  name          String // snapshot of product name at time of sale
+  qty           Int     @default(1)
+  unitPrice     Float   @map("unit_price")
+  discount      Float   @default(0)
+  totalPrice    Float   @map("total_price")
+  note          String?
+  kitchenStatus String  @default("PENDING") @map("kitchen_status") // PENDING | SENT | DONE
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Transaction {
+  id            String   @id @default(uuid())
+  transactionId String   @unique @map("transaction_id")
+  tenantId      String   @map("tenant_id")
+  orderId       String   @map("order_id")
+  amount        Float
+  type          String   @default("PAYMENT") // PAYMENT | REFUND | VOID
+  method        String   @default("CASH")
+  slipStatus    String   @default("PENDING") @map("slip_status")
+  slipData      Json?    @map("slip_data")
+  slipUrl       String?  @map("slip_url")
+  refNumber     String?  @unique @map("ref_number")
+  date          DateTime @default(now())
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([tenantId])
+  @@map("transactions")
+}
+
+// POS floor plan
+model PosZone {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  name     String
+  floor    Int    @default(1)
+  color    String @default("#f97316")
+
+  tables PosTable[]
+
+  @@index([tenantId])
+  @@map("pos_zones")
+}
+
+model PosTable {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  zoneId    String? @map("zone_id")
+  name      String
+  capacity  Int     @default(4)
+  shape     String  @default("rect") // rect | circle
+  positionX Float   @default(0) @map("position_x")
+  positionY Float   @default(0) @map("position_y")
+  floor     Int     @default(1)
+  status    String  @default("AVAILABLE") // AVAILABLE | OCCUPIED | RESERVED | BILL_REQUESTED | CLEANING
+  isExtra   Boolean @default(false) @map("is_extra") // Is this an extra/temporary table?
+  parentId  String? @map("parent_id") // For merged tables, points to the main table
+
+  zone   PosZone? @relation(fields: [zoneId], references: [id])
+  orders Order[]
+
+  @@index([tenantId])
+  @@map("pos_tables")
+}
+
+// Per-tenant receipt/document configuration
+model PosReceiptConfig {
+  id                String  @id @default(uuid())
+  tenantId          String  @unique @map("tenant_id")
+  businessName      String? @map("business_name")
+  address           String? @db.Text
+  taxId             String? @map("tax_id") // 13-digit Thai TIN
+  phone             String?
+  website           String?
+  logoUrl           String? @map("logo_url")
+  vatIncluded       Boolean @default(true) @map("vat_included")
+  vatRate           Float   @default(7) @map("vat_rate")
+  serviceChargeRate Float   @default(0) @map("service_charge_rate")
+  footerText        String? @map("footer_text")
+
+  @@map("pos_receipt_configs")
+}
+
+// ============================================
+// DOMAIN: Products & Catalog
+// ============================================
+
+model Product {
+  id                  String   @id @default(uuid())
+  sku                 String   @unique @map("product_id") // business key (was productId) — ERP standard per ADR-075
+  tenantId            String   @map("tenant_id") // CRITICAL: multi-tenant
+  name                String
+  description         String?  @db.Text
+  category            String
+  fallbackSubCategory String?  @map("fallback_sub_category")
+  imageUrl            String?  @map("image_url")
+  barcode             String?  @map("sku") // scannable code for POS (was sku) — ADR-075
+  basePrice           Float    @default(0) @map("base_price")
+  posPrice            Float?   @map("pos_price") // override base_price for POS
+  hours               Float?
+  sessionType         String?  @map("session_type")
+  isActive            Boolean  @default(true) @map("is_active")
+  isPosVisible        Boolean  @default(true) @map("is_pos_visible")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  enrollments Enrollment[]
+  schedules   CourseSchedule[]
+  recipes     ProductRecipe[]
+
+  @@index([tenantId])
+  @@index([category])
+  @@map("products")
+}
+
+// ============================================
+// DOMAIN: Enrollment & Schedule
+// ============================================
+
+model Enrollment {
+  id             String    @id @default(uuid())
+  enrollmentId   String    @unique @map("enrollment_id")
+  tenantId       String    @map("tenant_id")
+  customerId     String    @map("customer_id")
+  productId      String    @map("product_id")
+  packageId      String?   @map("package_id")
+  orderId        String?   @map("order_id")
+  soldById       String?   @map("sold_by_id")
+  totalPrice     Float     @default(0) @map("total_price")
+  // Lifecycle: PENDING → CONFIRMED → IN_PROGRESS → COMPLETED | CANCELLED
+  status         String    @default("PENDING")
+  hoursCompleted Float     @default(0) @map("hours_completed")
+  enrolledAt     DateTime  @default(now()) @map("enrolled_at")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  customer    Customer          @relation(fields: [customerId], references: [id])
+  product     Product           @relation(fields: [productId], references: [id])
+  items       EnrollmentItem[]
+  attendance  ClassAttendance[]
+  certificate Certificate?
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([status])
+  @@map("enrollments")
+}
+
+// Tracks per-course progress within an Enrollment
+model EnrollmentItem {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  enrollmentId   String   @map("enrollment_id")
+  productId      String   @map("product_id")
+  hoursCompleted Float    @default(0) @map("hours_completed")
+  // PENDING | IN_PROGRESS | COMPLETED
+  status         String   @default("PENDING")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId])
+  @@index([tenantId])
+  @@map("enrollment_items")
+}
+
+// Per-class attendance record (QR check-in or staff manual mark)
+model ClassAttendance {
+  id           String    @id @default(uuid())
+  tenantId     String    @map("tenant_id")
+  enrollmentId String    @map("enrollment_id")
+  scheduleId   String    @map("schedule_id")
+  // PRESENT | ABSENT | LATE | EXCUSED
+  status       String    @default("ABSENT")
+  checkedAt    DateTime? @map("checked_at")
+  note         String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  enrollment Enrollment     @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  schedule   CourseSchedule @relation(fields: [scheduleId], references: [id])
+
+  // prevent duplicate check-in for same student+class
+  @@unique([enrollmentId, scheduleId])
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("class_attendances")
+}
+
+// Issued when student reaches hoursCompleted >= threshold
+// format: CERT-{YYYYMMDD}-{seq} — see id_standards.yaml
+model Certificate {
+  id            String    @id @default(uuid())
+  certificateId String    @unique @map("certificate_id")
+  tenantId      String    @map("tenant_id")
+  enrollmentId  String    @unique @map("enrollment_id")
+  customerId    String    @map("customer_id")
+  // BASIC_30H | PRO_111H | MASTER_201H
+  level         String
+  issuedDate    DateTime  @default(now()) @map("issued_date")
+  pdfUrl        String?   @map("pdf_url")
+  notifiedAt    DateTime? @map("notified_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id])
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("certificates")
+}
+
+model CourseSchedule {
+  id                String   @id @default(uuid())
+  scheduleId        String   @unique @map("schedule_id")
+  tenantId          String   @default("10000000-0000-0000-0000-000000000001") @map("tenant_id")
+  productId         String   @map("product_id")
+  instructorId      String?  @map("instructor_id")
+  scheduledDate     DateTime @map("scheduled_date")
+  startTime         String   @map("start_time")
+  endTime           String   @map("end_time")
+  maxStudents       Int      @default(10) @map("max_students")
+  confirmedStudents Int      @default(0) @map("confirmed_students")
+  status            String   @default("SCHEDULED")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  product     Product           @relation(fields: [productId], references: [id])
+  attendances ClassAttendance[]
+
+  @@index([tenantId])
+  @@index([scheduledDate])
+  @@map("course_schedules")
+}
+
+// ============================================
+// DOMAIN: Marketing & Ads (synced from Meta via QStash)
+// ZDEV-TSK-20260409-053 — added AdAccount, Campaign, AdSet,
+//   AdDailyPlacement, AdHourlyMetric; added reach to AdDailyMetric
+// ============================================
+
+// AdAccount — เชื่อม Tenant กับ Meta Ad Account (1 tenant : many accounts)
+model AdAccount {
+  id        String   @id @default(uuid())
+  accountId String   @unique @map("account_id") // Meta account_id (numeric string)
+  tenantId  String   @map("tenant_id")
+  name      String   @default("")
+  currency  String   @default("THB")
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  campaigns Campaign[]
+
+  @@index([tenantId])
+  @@map("ad_accounts")
+}
+
+// Campaign — Meta Campaign (1 AdAccount : many Campaigns)
+model Campaign {
+  id          String    @id @default(uuid())
+  campaignId  String    @unique @map("campaign_id") // Meta campaign_id
+  adAccountId String    @map("ad_account_id")
+  name        String
+  objective   String?
+  status      String    @default("ACTIVE")
+  startDate   DateTime? @map("start_date")
+  endDate     DateTime? @map("end_date")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  adAccount AdAccount @relation(fields: [adAccountId], references: [accountId])
+  adSets    AdSet[]
+
+  @@index([adAccountId])
+  @@map("campaigns")
+}
+
+// AdSet — Meta Ad Set (1 Campaign : many AdSets)
+model AdSet {
+  id          String   @id @default(uuid())
+  adSetId     String   @unique @map("ad_set_id") // Meta adset_id
+  campaignId  String   @map("campaign_id")
+  name        String
+  status      String   @default("ACTIVE")
+  dailyBudget Float    @default(0) @map("daily_budget")
+  targeting   Json     @default("{}") // ZDEV-TSK-20260409-054
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [campaignId])
+  ads      Ad[]
+
+  @@index([campaignId])
+  @@map("ad_sets")
+}
+
+// Ad — Meta Ad (1 AdSet : many Ads)
+model Ad {
+  id             String   @id @default(uuid())
+  adId           String   @unique @map("ad_id") // Meta ad_id
+  adSetId        String?  @map("ad_set_id")
+  name           String
+  status         String   @default("ACTIVE")
+  deliveryStatus String   @default("") @map("delivery_status")
+  creativeId     String?  @map("creative_id") // ZDEV-TSK-20260409-054
+  spend          Float    @default(0)
+  impressions    Int      @default(0)
+  clicks         Int      @default(0)
+  revenue        Float    @default(0)
+  roas           Float    @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  adSet           AdSet?             @relation(fields: [adSetId], references: [adSetId])
+  dailyMetrics    AdDailyMetric[]
+  dailyPlacements AdDailyPlacement[]
+  dailyDemographics AdDailyDemographic[]
+  hourlyMetrics   AdHourlyMetric[]
+  liveStatus      AdLiveStatus?
+
+  @@map("ads")
+}
+
+// AdDailyMetric — รายวัน (aggregated) สำหรับ dashboard + timeseries
+model AdDailyMetric {
+  id              String   @id @default(uuid())
+  adId            String   @map("ad_id")
+  date            DateTime
+  spend           Float    @default(0)
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  leads           Int      @default(0)
+  purchases       Int      @default(0)
+  revenue         Float    @default(0)
+  roas            Float    @default(0)
+  reach           Int      @default(0) // ZDEV-TSK-20260409-053
+  cpm             Float    @default(0) // ZDEV-TSK-20260409-054
+  cpc             Float    @default(0) // ZDEV-TSK-20260409-054
+  frequency       Float    @default(0) // ZDEV-TSK-20260409-054
+  costPerLead     Float    @default(0) @map("cost_per_lead") // ZDEV-TSK-20260409-054
+  costPerPurchase Float    @default(0) @map("cost_per_purchase") // ZDEV-TSK-20260409-054
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  ad Ad @relation(fields: [adId], references: [adId])
+
+  @@unique([adId, date])
+  @@index([adId, date])
+  @@map("ad_daily_metrics")
+}
+
+// AdLiveStatus — real-time delivery status (upserted by sync-hourly)
+model AdLiveStatus {
+  id                 String    @id @default(uuid())
+  adId               String    @unique @map("ad_id")
+  isRunningNow       Boolean   @default(false) @map("is_running_now")
+  lastImpressionTime DateTime? @map("last_impression_time")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  ad Ad @relation(fields: [adId], references: [adId])
+
+  @@map("ad_live_status")
+}
+
+// AdDailyPlacement — breakdown by platform + position (Facebook, Instagram, etc.)
+model AdDailyPlacement {
+  id          String   @id @default(uuid())
+  adId        String   @map("ad_id")
+  date        DateTime
+  platform    String // e.g. "facebook", "instagram", "audience_network"
+  position    String // e.g. "feed", "story", "reels"
+  spend       Float    @default(0)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  revenue     Float    @default(0)
+  reach       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  ad Ad @relation(fields: [adId], references: [adId])
+
+  @@unique([adId, date, platform, position])
+  @@index([adId, date])
+  @@map("ad_daily_placements")
+}
+
+// AdDailyDemographic — breakdown by age and gender
+model AdDailyDemographic {
+  id          String   @id @default(uuid())
+  adId        String   @map("ad_id")
+  date        DateTime
+  age         String
+  gender      String
+  spend       Float    @default(0)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  revenue     Float    @default(0)
+  reach       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  ad Ad @relation(fields: [adId], references: [adId], onDelete: Cascade)
+
+  @@unique([adId, date, age, gender])
+  @@index([adId, date])
+  @@map("ad_daily_demographics")
+}
+
+// TenantMarketingConfig — Business Memory for Marketing AI (FEAT15)
+model TenantMarketingConfig {
+  id                    String   @id @default(uuid())
+  tenantId              String   @unique @map("tenant_id")
+  targetROAS            Float    @default(3.0) @map("target_roas")
+  avgCOGS               Float    @default(0.35) @map("avg_cogs")
+  dailyBudgetCap        Int?     @map("daily_budget_cap")
+  creatureFatigueFreq   Float    @default(4.0) @map("creature_fatigue_freq")
+  seasonalPeaks         String[] @map("seasonal_peaks")
+  notes                 String?
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("tenant_marketing_configs")
+}
+
+// AdHourlyMetric — hourly breakdown สำหรับ 24×7 heatmap
+ model AdHourlyMetric {
+  id          String   @id @default(uuid())
+  adId        String   @map("ad_id")
+  date        DateTime
+  hour        Int // 0–23
+  spend       Float    @default(0)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  leads       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  ad Ad @relation(fields: [adId], references: [adId])
+
+  @@unique([adId, date, hour])
+  @@index([adId, date])
+  @@map("ad_hourly_metrics")
+}
+
+// ============================================
+// DOMAIN: Kitchen Ops
+// ============================================
+
+model Ingredient {
+  id           String   @id @default(uuid())
+  ingredientId String   @unique @map("ingredient_id")
+  tenantId     String   @default("10000000-0000-0000-0000-000000000001") @map("tenant_id")
+  name         String
+  unit         String   @default("g")
+  currentStock Float    @default(0) @map("current_stock")
+  minStock     Float    @default(0) @map("min_stock")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  lots              IngredientLot[]
+  recipeIngredients RecipeIngredient[]
+
+  @@index([tenantId])
+  @@map("ingredients")
+}
+
+model IngredientLot {
+  id           String   @id @default(uuid())
+  lotId        String   @unique @map("lot_id")
+  tenantId     String   @default("10000000-0000-0000-0000-000000000001") @map("tenant_id")
+  ingredientId String   @map("ingredient_id")
+  initialQty   Float    @map("initial_qty")
+  remainingQty Float    @map("remaining_qty")
+  expiresAt    DateTime @map("expires_at")
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@index([tenantId])
+  @@index([ingredientId, expiresAt])
+  @@map("ingredient_lots")
+}
+
+model Recipe {
+  id           String   @id @default(uuid())
+  recipeId     String   @unique @map("recipe_id")
+  tenantId     String   @map("tenant_id")
+  name         String
+  description  String?  @db.Text
+  yieldAmount  Float?   @map("yield_amount")
+  yieldUnit    String?  @map("yield_unit")
+  category     String?
+  instructions Json     @default("[]") // Array of {step: 1, text: "..."}
+  imageUrl     String?  @map("image_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  ingredients RecipeIngredient[]
+  products    ProductRecipe[]
+
+  @@index([tenantId])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id           String  @id @default(uuid())
+  tenantId     String  @default("10000000-0000-0000-0000-000000000001") @map("tenant_id")
+  recipeId     String  @map("recipe_id")
+  ingredientId String  @map("ingredient_id")
+  qty          Float
+  unit         String
+  note         String?
+
+  recipe     Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([recipeId, ingredientId])
+  @@index([tenantId])
+  @@map("recipe_ingredients")
+}
+
+// Join table for Courses (Products) using Recipes
+model ProductRecipe {
+  id        String @id @default(uuid())
+  tenantId  String @default("10000000-0000-0000-0000-000000000001") @map("tenant_id")
+  productId String @map("product_id")
+  recipeId  String @map("recipe_id")
+  order     Int    @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  recipe  Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, recipeId])
+  @@index([tenantId])
+  @@map("product_recipes")
+}
+
+// ============================================
+// DOMAIN: Tasks
+// ============================================
+
+model Task {
+  id          String    @id @default(uuid())
+  taskId      String    @unique @map("task_id")
+  tenantId    String    @map("tenant_id")
+  customerId  String?   @map("customer_id")
+  assigneeId  String?   @map("assignee_id")
+  createdById String?   @map("created_by_id")
+  title       String
+  description String?   @db.Text
+  type        String    @default("FOLLOW_UP")
+  status      String    @default("PENDING")
+  priority    String    @default("L3")
+  taskType    String    @default("SINGLE") @map("task_type")
+  dueDate     DateTime? @map("due_date")
+  startDate   DateTime? @map("start_date")
+  timeStart   String?   @map("time_start")
+  timeEnd     String?   @map("time_end")
+  milestones  Json?
+  completedAt DateTime? @map("completed_at")
+  notionId    String?   @map("notion_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("tasks")
+}
+
+// ============================================
+// DOMAIN: Daily Sales Brief (DSB)
+// ============================================
+
+model ConversationAnalysis {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  tenantId       String   @map("tenant_id")
+  analyzedDate   DateTime @map("analyzed_date")
+  analyzedAt     DateTime @default(now()) @map("analyzed_at")
+  contactType    String   @map("contact_type")
+  pdadStage      String?  @map("pdad_stage")
+  sentiment      String?
+  purchaseIntent Float?   @default(0) @map("purchase_intent")
+  intent         String?
+  suggestedCta   String?  @map("suggested_cta")
+  state          String
+  cta            String
+  revenue        Float    @default(0)
+  sourceAdId     String?  @map("source_ad_id")
+  tags           String[]
+  summary        String   @db.Text
+  rawOutput      Json?    @map("raw_output")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, analyzedDate])
+  @@index([tenantId])
+  @@index([analyzedDate])
+  @@index([contactType])
+  @@index([state])
+  @@map("conversation_analyses")
+}
+
+model DailyBrief {
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  briefDate          DateTime  @map("brief_date")
+  totalConversations Int       @default(0) @map("total_conversations")
+  totalContacts      Int       @default(0) @map("total_contacts")
+  totalLeads         Int       @default(0) @map("total_leads")
+  totalCustomers     Int       @default(0) @map("total_customers")
+  closedWon          Int       @default(0) @map("closed_won")
+  totalRevenue       Float     @default(0) @map("total_revenue")
+  hotLeads           Int       @default(0) @map("hot_leads")
+  considering        Int       @default(0) @map("considering")
+  closedLost         Int       @default(0) @map("closed_lost")
+  topCtas            Json      @default("[]") @map("top_ctas")
+  adBreakdown        Json      @default("{}") @map("ad_breakdown")
+  topTags            Json      @default("[]") @map("top_tags")
+  perAgentBreakdown  Json?     @default("{}") @map("per_agent_breakdown")
+  actionItems        Json?     @default("[]") @map("action_items")
+  status             String    @default("PENDING")
+  processedAt        DateTime? @map("processed_at")
+  sentAt             DateTime? @map("sent_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, briefDate])
+  @@index([tenantId])
+  @@index([briefDate])
+  @@index([status])
+  @@map("daily_briefs")
+}
+
+model DailySalesReport {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  reportDate   DateTime @map("report_date")
+  totalRevenue Float    @default(0) @map("total_revenue")
+  itemsSold    Json     @default("[]") @map("items_sold")
+  rawText      String?  @map("raw_text") @db.Text
+  processedBy  String   @default("AI") @map("processed_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, reportDate])
+  @@index([tenantId])
+  @@map("daily_sales_reports")
+}
+
+// ============================================
+// DOMAIN: Notifications
+// ============================================
+
+model WebPushSubscription {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?  @map("user_agent")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("web_push_subscriptions")
+}
+
+// ============================================
+// DOMAIN: Packages (Culinary — FEAT19 pending)
+// ============================================
+
+model Package {
+  id            String   @id @default(uuid())
+  packageId     String   @unique @map("package_id")
+  name          String
+  description   String?  @db.Text
+  originalPrice Float    @default(0) @map("original_price")
+  packagePrice  Float    @default(0) @map("package_price")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  courses PackageCourse[]
+
+  @@map("packages")
+}
+
+model PackageCourse {
+  id           String  @id @default(uuid())
+  packageId    String  @map("package_id")
+  productId    String  @map("product_id")
+  isRequired   Boolean @default(true) @map("is_required")
+  isLocked     Boolean @default(false) @map("is_locked")
+  swapGroup    String? @map("swap_group")
+  swapGroupMax Int?    @map("swap_group_max")
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@map("package_courses")
+}
+
+// ============================================
+// DOMAIN: Audit
+// ============================================
+
+// Audit log — append-only trail of sensitive actions (ZDEV-TSK-20260410-026)
+//
+// IMMUTABILITY: this table is conceptually append-only. The auditRepo
+// intentionally exposes only `create` and `find*` — no update or delete.
+// A future hardening pass can add a Postgres trigger blocking UPDATE/DELETE,
+// but the application contract is the first line of defense.
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String?  @map("tenant_id")
+  actor      String // legacy: free-form string ("EMP-123" or "system")
+  actorId    String?  @map("actor_id") // canonical Employee.id when known
+  actorRole  String?  @map("actor_role") // normalized role at the time of the action
+  action     String // e.g. UPDATE_EMPLOYEE_ROLE, EXPORT_REVENUE
+  target     String? // resource id (e.g. customer-uuid, order-uuid)
+  targetType String?  @map("target_type") // resource type (customer, order, employee, integration)
+  before     Json? // snapshot of fields BEFORE the change
+  after      Json? // snapshot of fields AFTER the change
+  details    Json? // free-form metadata for the action
+  ipAddress  String?  @map("ip_address") // x-forwarded-for / x-real-ip
+  userAgent  String?  @map("user_agent") @db.Text // request UA header
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([actor])
+  @@index([actorId])
+  @@index([action])
+  @@index([target])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// DOMAIN: Approval Workflow
+// ============================================
+
+model ApprovalWorkflow {
+  id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
+  entityType    String    @map("entity_type")
+  entityId      String    @map("entity_id")
+  requestedById String    @map("requested_by_id")
+  approverId    String?   @map("approver_id")
+  status        String    @default("PENDING")
+  level         Int       @default(1)
+  note          String?   @db.Text
+  decidedAt     DateTime? @map("decided_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([entityType, entityId])
+  @@index([approverId])
+  @@map("approval_workflows")
+}
+
+// ============================================
+// DOMAIN: Inventory
+// ============================================
+
+model Warehouse {
+  id          String   @id @default(uuid())
+  warehouseId String   @unique @map("warehouse_id")
+  tenantId    String   @map("tenant_id")
+  name        String
+  location    String?
+  type        String   @default("MAIN")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  stocks      WarehouseStock[]
+  movements   StockMovement[]
+  stockCounts StockCount[]
+
+  @@index([tenantId])
+  @@map("warehouses")
+}
+
+model WarehouseStock {
+  id           String    @id @default(uuid())
+  tenantId     String    @map("tenant_id")
+  warehouseId  String    @map("warehouse_id")
+  productId    String    @map("product_id")
+  productType  String    @map("product_type")
+  qty          Float     @default(0)
+  unit         String    @default("unit")
+  reorderPoint Float?    @map("reorder_point")
+  lastMovedAt  DateTime? @map("last_moved_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@unique([tenantId, warehouseId, productId, productType])
+  @@index([tenantId])
+  @@index([warehouseId])
+  @@map("warehouse_stocks")
+}
+
+model StockMovement {
+  id            String   @id @default(uuid())
+  movementId    String   @unique @map("movement_id")
+  tenantId      String   @map("tenant_id")
+  warehouseId   String   @map("warehouse_id")
+  productId     String   @map("product_id")
+  productType   String   @map("product_type")
+  type          String
+  qty           Float
+  unitCost      Float?   @map("unit_cost")
+  referenceId   String?  @map("reference_id")
+  referenceType String?  @map("reference_type")
+  performedById String?  @map("performed_by_id")
+  note          String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@index([tenantId])
+  @@index([warehouseId])
+  @@index([productId])
+  @@index([referenceId])
+  @@map("stock_movements")
+}
+
+model StockCount {
+  id            String    @id @default(uuid())
+  countId       String    @unique @map("count_id")
+  tenantId      String    @map("tenant_id")
+  warehouseId   String    @map("warehouse_id")
+  status        String    @default("DRAFT")
+  scheduledDate DateTime? @map("scheduled_date")
+  completedAt   DateTime? @map("completed_at")
+  completedById String?   @map("completed_by_id")
+  note          String?   @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  items     StockCountItem[]
+  warehouse Warehouse        @relation(fields: [warehouseId], references: [id])
+
+  @@index([tenantId])
+  @@map("stock_counts")
+}
+
+model StockCountItem {
+  id          String  @id @default(uuid())
+  countId     String  @map("count_id")
+  productId   String  @map("product_id")
+  productType String  @map("product_type")
+  expectedQty Float   @map("expected_qty")
+  countedQty  Float?  @map("counted_qty")
+  varianceQty Float?  @map("variance_qty")
+  note        String?
+
+  stockCount StockCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+
+  @@unique([countId, productId, productType])
+  @@map("stock_count_items")
+}
+
+// ============================================
+// DOMAIN: Procurement
+// ============================================
+
+model Supplier {
+  id           String   @id @default(uuid())
+  supplierId   String   @unique @map("supplier_id")
+  tenantId     String   @map("tenant_id")
+  name         String
+  contactName  String?  @map("contact_name")
+  phone        String?
+  email        String?
+  address      String?  @db.Text
+  taxId        String?  @map("tax_id")
+  paymentTerms String   @default("NET_30") @map("payment_terms")
+  currency     String   @default("THB")
+  isActive     Boolean  @default(true) @map("is_active")
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  purchaseOrders PurchaseOrderV2[]
+
+  @@index([tenantId])
+  @@map("suppliers")
+}
+
+model PurchaseRequest {
+  id            String    @id @default(uuid())
+  requestId     String    @unique @map("request_id")
+  tenantId      String    @map("tenant_id")
+  requestedById String    @map("requested_by_id")
+  status        String    @default("DRAFT")
+  note          String?   @db.Text
+  neededBy      DateTime? @map("needed_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  items PurchaseRequestItem[]
+
+  @@index([tenantId])
+  @@map("purchase_requests")
+}
+
+model PurchaseRequestItem {
+  id                String  @id @default(uuid())
+  requestId         String  @map("request_id")
+  productId         String  @map("product_id")
+  productType       String  @map("product_type")
+  qtyRequested      Float   @map("qty_requested")
+  unit              String  @default("unit")
+  estimatedUnitCost Float?  @map("estimated_unit_cost")
+  note              String?
+
+  request PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, productId, productType])
+  @@map("purchase_request_items")
+}
+
+model PurchaseOrderV2 {
+  id                   String    @id @default(uuid())
+  poId                 String    @unique @map("po_id")
+  tenantId             String    @map("tenant_id")
+  supplierId           String    @map("supplier_id")
+  requestId            String?   @map("request_id")
+  requestedById        String    @map("requested_by_id")
+  status               String    @default("DRAFT")
+  warehouseId          String?   @map("warehouse_id")
+  expectedDeliveryDate DateTime? @map("expected_delivery_date")
+  actualDeliveryDate   DateTime? @map("actual_delivery_date")
+  totalAmount          Float     @default(0) @map("total_amount")
+  vatAmount            Float     @default(0) @map("vat_amount")
+  grandTotal           Float     @default(0) @map("grand_total")
+  currency             String    @default("THB")
+  paymentMethod        String?   @map("payment_method")
+  paymentRef           String?   @map("payment_ref")
+  notes                String?   @db.Text
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  supplier  Supplier            @relation(fields: [supplierId], references: [id])
+  items     POItem[]
+  approvals POApproval[]
+  grns      GoodsReceivedNote[]
+  tracking  POTracking[]
+
+  @@index([tenantId])
+  @@index([supplierId])
+  @@index([status])
+  @@map("purchase_orders_v2")
+}
+
+model POItem {
+  id          String  @id @default(uuid())
+  poId        String  @map("po_id")
+  productId   String  @map("product_id")
+  productType String  @map("product_type")
+  productName String  @map("product_name")
+  unit        String  @default("unit")
+  qtyOrdered  Float   @map("qty_ordered")
+  unitCost    Float   @map("unit_cost")
+  vatPct      Float   @default(7) @map("vat_pct")
+  lineTotal   Float   @map("line_total")
+  qtyReceived Float   @default(0) @map("qty_received")
+  note        String?
+
+  po PurchaseOrderV2 @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@unique([poId, productId, productType])
+  @@map("po_items")
+}
+
+model POApproval {
+  id         String   @id @default(uuid())
+  poId       String   @map("po_id")
+  tenantId   String   @map("tenant_id")
+  approverId String   @map("approver_id")
+  action     String
+  note       String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  po PurchaseOrderV2 @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId])
+  @@index([tenantId])
+  @@map("po_approvals")
+}
+
+model POAcceptance {
+  id         String   @id @default(uuid())
+  poId       String   @unique @map("po_id")
+  tenantId   String   @map("tenant_id")
+  acceptedAt DateTime @map("accepted_at")
+  acceptedBy String   @map("accepted_by")
+  note       String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("po_acceptances")
+}
+
+model POTracking {
+  id               String    @id @default(uuid())
+  poId             String    @map("po_id")
+  tenantId         String    @map("tenant_id")
+  carrier          String?
+  trackingNumber   String?   @map("tracking_number")
+  estimatedArrival DateTime? @map("estimated_arrival")
+  status           String    @default("IN_TRANSIT")
+  note             String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  po PurchaseOrderV2 @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("po_tracking")
+}
+
+model GoodsReceivedNote {
+  id           String   @id @default(uuid())
+  grnId        String   @unique @map("grn_id")
+  tenantId     String   @map("tenant_id")
+  poId         String   @map("po_id")
+  warehouseId  String   @map("warehouse_id")
+  receivedById String   @map("received_by_id")
+  receivedAt   DateTime @default(now()) @map("received_at")
+  note         String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  items GRNItem[]
+  po    PurchaseOrderV2 @relation(fields: [poId], references: [id])
+
+  @@index([tenantId])
+  @@index([poId])
+  @@map("goods_received_notes")
+}
+
+model GRNItem {
+  id          String    @id @default(uuid())
+  grnId       String    @map("grn_id")
+  productId   String    @map("product_id")
+  productType String    @map("product_type")
+  qtyReceived Float     @map("qty_received")
+  unitCost    Float     @map("unit_cost")
+  batchNumber String?   @map("batch_number")
+  expiresAt   DateTime? @map("expires_at")
+  note        String?
+
+  grn GoodsReceivedNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@unique([grnId, productId])
+  @@map("grn_items")
+}
+
+model POReturn {
+  id        String   @id @default(uuid())
+  returnId  String   @unique @map("return_id")
+  tenantId  String   @map("tenant_id")
+  poId      String   @map("po_id")
+  grnId     String?  @map("grn_id")
+  reason    String   @db.Text
+  items     Json     @default("[]")
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([poId])
+  @@map("po_returns")
+}
+
+model POIssue {
+  id           String    @id @default(uuid())
+  issueId      String    @unique @map("issue_id")
+  tenantId     String    @map("tenant_id")
+  poId         String    @map("po_id")
+  issueType    String    @map("issue_type")
+  description  String    @db.Text
+  resolvedAt   DateTime? @map("resolved_at")
+  resolvedById String?   @map("resolved_by_id")
+  status       String    @default("OPEN")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([poId])
+  @@map("po_issues")
+}
+
+// ============================================
+// DOMAIN: AI Agent Mode (M4-A2)
+// ============================================
+
+// Style profile extracted from each employee's conversation history
+model AgentStyle {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  employeeId      String   @map("employee_id") // Employee.id (not employeeId string)
+  tone            String   @default("casual") // formal | casual | friendly
+  sentenceLength  String   @default("medium") // short | medium | long
+  emojiUsage      String   @default("moderate") // none | moderate | frequent
+  vocabulary      Json     @default("[]") // Array of characteristic phrases/words
+  closingPatterns Json     @default("[]") // Array of sign-off patterns (e.g. ขอบคุณครับ)
+  sampleMessages  Json     @default("[]") // Sample analyzed messages for reference
+  analyzedAt      DateTime @default(now()) @map("analyzed_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, employeeId])
+  @@index([tenantId])
+  @@map("agent_styles")
+}
+
+// Audit trail for every AI-generated reply in Agent Mode
+model ConversationLog {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  conversationId String   @map("conversation_id") // Conversation.id
+  sender         String // 'AI' | 'HUMAN'
+  content        String   @db.Text
+  metadata       Json     @default("{}")
+  // metadata keys: agentStyleId, escalationReason, promptTokens, modelVersion
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, conversationId])
+  @@map("conversation_logs")
+}
+
+// ============================================
+// DOMAIN: Accounting Platform (FEAT17, ZDEV-TSK-20260410-016)
+// ============================================
+
+// Per-tenant, per-provider integration config + encrypted OAuth tokens
+model IntegrationConfig {
+  id                   String    @id @default(uuid())
+  tenantId             String    @map("tenant_id")
+  provider             String // flowaccount | express | peak | sage
+  oauthAccessTokenEnc  String?   @map("oauth_access_token_enc") @db.Text
+  oauthRefreshTokenEnc String?   @map("oauth_refresh_token_enc") @db.Text
+  oauthExpiresAt       DateTime? @map("oauth_expires_at")
+  accountantEmail      String?   @map("accountant_email")
+  syncMode             String    @default("manual") @map("sync_mode") // manual | daily | realtime
+  syncOptionsJson      Json      @default("{}") @map("sync_options_json")
+  accountMappingJson   Json      @default("{}") @map("account_mapping_json")
+  isActive             Boolean   @default(false) @map("is_active")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, provider], name: "tenantId_provider")
+  @@index([tenantId])
+  @@index([isActive])
+  @@map("integration_configs")
+}
+
+// Audit trail per sync run (FlowAccount batch, Express export, etc.)
+model IntegrationSyncLog {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  provider         String // flowaccount | express
+  syncType         String   @map("sync_type") // invoice | contact | expense
+  triggeredBy      String   @map("triggered_by") // cron | manual | realtime
+  total            Int      @default(0)
+  success          Int      @default(0)
+  failed           Int      @default(0)
+  errorDetailsJson Json?    @map("error_details_json")
+  startedAt        DateTime @map("started_at")
+  finishedAt       DateTime @default(now()) @map("finished_at")
+
+  @@index([tenantId])
+  @@index([provider])
+  @@index([startedAt])
+  @@map("integration_sync_logs")
+}
+
+// Document reference: maps Zuri entity → external accounting document
+// Used for idempotency (ZRI-{orderId} dedup)
+model IntegrationDocumentRef {
+  id                 String   @id @default(uuid())
+  tenantId           String   @map("tenant_id")
+  provider           String // flowaccount | express
+  zuriEntityType     String   @map("zuri_entity_type") // order | customer | expense
+  zuriEntityId       String   @map("zuri_entity_id") // internal UUID
+  externalDocumentId String?  @map("external_document_id")
+  status             String   @default("synced") // synced | exported | failed | skipped
+  syncedAt           DateTime @default(now()) @map("synced_at")
+
+  @@unique([tenantId, provider, zuriEntityType, zuriEntityId], name: "tenantId_provider_zuriEntityType_zuriEntityId")
+  @@index([tenantId])
+  @@index([provider])
+  @@map("integration_document_refs")
+}
+
+// ============================================
+// DOMAIN: Migration Tracking (ZDEV-TSK-20260410-032)
+// ============================================
+
+// Tracks records created by scripts/migrate-zuri-v1.js so that
+// scripts/migrate-rollback.js can safely delete ONLY migration-seeded
+// rows without touching manually-entered data.
+//
+// A single migration run shares one `migrationId` (default: run timestamp)
+// so rollback can target a specific run via `--migration-id=<id>`.
+
+// ============================================
+// DOMAIN: Team Invitation & Ownership (FEAT21)
+// ============================================
+
+model InvitationToken {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  token       String    @unique
+  email       String
+  role        String    @default("STAFF")
+  invitedById String    @map("invited_by_id")
+  usedAt      DateTime? @map("used_at")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([token])
+  @@map("invitation_tokens")
+}
+
+model OwnershipTransferRequest {
+  id             String    @id @default(uuid())
+  tenantId       String    @map("tenant_id")
+  fromEmployeeId String    @map("from_employee_id")
+  toEmployeeId   String    @map("to_employee_id")
+  otpHash        String    @map("otp_hash")
+  status         String    @default("PENDING") // PENDING | CONFIRMED | CANCELLED | EXPIRED
+  expiresAt      DateTime  @map("expires_at")
+  confirmedAt    DateTime? @map("confirmed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("ownership_transfer_requests")
+}
+
+model SystemAuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  type      String   // OWNERSHIP_TRANSFER | ROLE_CHANGE | MEMBER_INVITE | MEMBER_JOIN
+  actorId   String   @map("actor_id")
+  targetId  String?  @map("target_id")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([type])
+  @@map("system_audit_logs")
+}
+
+model MigrationLog {
+  id          String   @id @default(uuid())
+  migrationId String   @map("migration_id") // e.g. "zuri-v1-2026-04-10T03-00-00"
+  entityType  String   @map("entity_type") // employee | customer | product | order | enrollment | conversation | message
+  entityId    String   @map("entity_id") // Zuri-side id (UUID) of the created row
+  sourceId    String?  @map("source_id") // original id in the legacy DB (for audit / cross-reference)
+  tenantId    String   @map("tenant_id") // target tenant (usually V School)
+  migratedAt  DateTime @default(now()) @map("migrated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([migrationId, entityType, entityId], name: "migrationId_entityType_entityId")
+  @@index([tenantId])
+  @@index([migrationId])
+  @@index([entityType])
+  @@index([migratedAt])
+  @@map("migration_logs")
+}

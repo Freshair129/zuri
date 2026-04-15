@@ -1,0 +1,108 @@
+# FEAT-023_PlatformStrategy.yaml
+# Spec Reference: FEAT19-PLATFORM.md
+# Phase 3: ARCHITECT — Technical Feature Blueprint
+
+metadata:
+  id: FEAT-023
+  spec_id: FEAT19
+  name: "Multi-Surface Platform Strategy (PWA + LIFF + Native)"
+  module: "MOD-CORE"
+  status: "draft"
+  version: "0.1.0"
+  author: "MSP-AGT-EVA-COWORK"
+  related_spec: "docs/product/specs/FEAT19-PLATFORM.md"
+  depends_on: ["FEAT-001_MultiTenant", "FEAT-004_Inbox", "FEAT-009_POSMobile"]
+  adr_ref: "ADR-068"
+
+architectural_pattern:
+  pattern: "Progressive Enhancement — Web → PWA → LIFF → Native"
+  surfaces:
+    web_desktop: { status: "current", effort: "done" }
+    pwa: { status: "phase1", effort: "1-2 weeks", framework: "next-pwa" }
+    liff_v2: { status: "phase2", effort: "3-4 weeks", framework: "LIFF SDK v2" }
+    native_expo: { status: "phase3", effort: "2-3 months", framework: "Expo/React Native" }
+    php_pos_lite: { status: "phase5_optional", effort: "TBD", framework: "PHP 8.x + SQLite" }
+
+data_logic:
+  pwa_config:
+    manifest:
+      name: "Zuri CRM"
+      display: "standalone"
+      theme_color: "#1a1a2e"
+    service_worker: "next-pwa (Workbox)"
+    install_prompt: "After 2nd visit within 7 days"
+    push:
+      web: "WebPush API"
+      model_change: "WebPushSubscription — add platform: 'web'|'expo'"
+
+  liff_customer_routes:
+    route_group: "src/app/(liff)/"
+    auth: "POST /api/liff/auth — staff or customer role detection via LIFF JWT"
+    customer_features:
+      - "GET /api/liff/courses — browse courses"
+      - "POST /api/liff/enrollment — enroll"
+      - "GET /api/liff/orders/me — order history"
+      - "POST /api/liff/payment/{id}/slip — upload slip"
+    staff_features: "Reuse existing API endpoints with LIFF JWT guard"
+    multi_tenant: "tenantSlug query param → resolve tenantId"
+
+  native_expo:
+    push: "Expo Notifications (FCM/APNs)"
+    camera: "Expo Camera for QR scan + slip photo"
+    model_change: "WebPushSubscription — add expoToken field"
+    priority_screens: ["Inbox", "POS", "Task list", "Push notifications"]
+
+api_contracts:
+  - endpoint: "POST /api/liff/auth"
+    description: "Unified LIFF login (staff = JWT session, customer = temp token)"
+    payload: { liffAccessToken: "string", tenantSlug: "string" }
+    returns: "{ role: 'staff'|'customer', sessionToken: string }"
+    auth: "LIFF access token verification"
+
+  - endpoint: "GET /api/liff/courses"
+    description: "Course catalog for customer self-service"
+    auth: "Customer LIFF token"
+
+  - endpoint: "POST /api/liff/enrollment"
+    description: "Customer self-enrollment"
+    auth: "Customer LIFF token"
+
+  - endpoint: "GET /api/liff/orders/me"
+    description: "Customer's own order history"
+    auth: "Customer LIFF token"
+
+  - endpoint: "POST /api/liff/payment/{id}/slip"
+    description: "Upload payment slip from LIFF"
+    auth: "Customer LIFF token"
+
+security_matrix:
+  rules:
+    - role: "CUSTOMER"
+      resource: "LIFF"
+      can: ["SELF_ENROLL", "VIEW_OWN_ORDERS", "UPLOAD_SLIP"]
+    - role: "STF/MGR"
+      resource: "LIFF"
+      can: ["ALL_STAFF_FEATURES"]
+      condition: "Same tenant as LIFF config"
+
+geography:
+  tables:
+    modify:
+      - "WebPushSubscription (add: platform enum 'web'|'expo', expoToken string?)"
+  pages:
+    new:
+      - "src/app/(liff)/layout.jsx"
+      - "src/app/(liff)/courses/page.jsx"
+      - "src/app/(liff)/enrollment/page.jsx"
+      - "src/app/(liff)/orders/page.jsx"
+  api_routes:
+    new:
+      - "src/app/api/liff/auth/route.js"
+      - "src/app/api/liff/courses/route.js"
+      - "src/app/api/liff/enrollment/route.js"
+      - "src/app/api/liff/orders/me/route.js"
+      - "src/app/api/liff/payment/[id]/slip/route.js"
+  config:
+    new:
+      - "public/manifest.json"
+      - "public/sw.js (or next.config.js pwa config)"
