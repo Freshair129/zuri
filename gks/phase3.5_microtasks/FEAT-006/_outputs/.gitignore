@@ -1,0 +1,3 @@
+# SLM outputs are reproducible — not tracked in git
+*.js
+!.gitignore

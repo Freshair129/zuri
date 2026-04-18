@@ -1,0 +1,52 @@
+task_id: T2_error-mapper
+feature: FEAT-006
+concern: "Map repository error message to HTTP status + body"
+composer_slot: helpers
+
+output:
+  file: "gks/phase3.5_microtasks/FEAT-006/_outputs/T2.out.js"
+  exports:
+    - name: mapRepoErrorToHttp
+      kind: function
+
+prompt:
+  template: |
+    TASK: Write exactly one JavaScript function `mapRepoErrorToHttp(err)`.
+
+    INPUT: Error object with a `.message` string.
+    OUTPUT: object { status: number, body: { error: string } }
+
+    RULES (check in order, stop at first match):
+    1. err.message contains "cross-tenant" OR err.message contains "not found"
+       -> return { status: 404, body: { error: "Resource not found" } }
+    2. err.message contains "already part of a merge" OR err.message contains "not available"
+       -> return { status: 409, body: { error: "Conflict: " + err.message } }
+    3. default
+       -> return { status: 500, body: { error: "Internal Server Error" } }
+
+    CONSTRAINTS:
+    - Pure function, no imports, no I/O, no logging
+    - Use `export function`
+    - Use `err.message.includes(...)` for matching
+    - No template literals unless necessary
+
+    OUTPUT ONLY the function. No markdown fences. No prose. Start directly with `export function`.
+  inputs: {}
+
+acceptance_tests:
+  - input: '{ "message": "Table not found" }'
+    expect: '{ "status": 404, "body": { "error": "Resource not found" } }'
+  - input: '{ "message": "cross-tenant access denied" }'
+    expect: '{ "status": 404, "body": { "error": "Resource not found" } }'
+  - input: '{ "message": "Tables already part of a merge group" }'
+    expect: '{ "status": 409, "body": { "error": "Conflict: Tables already part of a merge group" } }'
+  - input: '{ "message": "T5 not available" }'
+    expect: '{ "status": 409, "body": { "error": "Conflict: T5 not available" } }'
+  - input: '{ "message": "DB connection lost" }'
+    expect: '{ "status": 500, "body": { "error": "Internal Server Error" } }'
+
+runner:
+  model: "qwen2.5-coder:14b-instruct-q4_K_M"
+  max_retries: 3
+  temperature: 0.0
+  num_ctx: 4096

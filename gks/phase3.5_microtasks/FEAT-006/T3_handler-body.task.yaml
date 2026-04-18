@@ -1,0 +1,70 @@
+task_id: T3_handler-body
+feature: FEAT-006
+concern: "Async handler body that validates, calls repo, maps errors"
+composer_slot: handler
+depends_on: [T1_validate-input, T2_error-mapper]
+
+output:
+  file: "gks/phase3.5_microtasks/FEAT-006/_outputs/T3.out.js"
+  exports:
+    - name: mergeHandler
+      kind: function
+
+prompt:
+  template: |
+    TASK: Write exactly one async JavaScript function `mergeHandler(req, ctx)`.
+
+    INPUTS:
+    - req: object with async method `req.json()` returning parsed body
+    - ctx: object { tenantId: string, userId: string, role: string }
+
+    AVAILABLE (already in scope — do not re-import):
+    - NextResponse (from 'next/server')
+    - mergeTables(tenantId, primary_id, children_ids) — async, from '@/lib/repositories/tableRepo'
+    - validateMergeInput(body) — from helpers, returns { ok, error?, data? }
+    - mapRepoErrorToHttp(err) — from helpers, returns { status, body }
+
+    LOGIC (exact):
+    1. const body = await req.json()
+    2. const validation = validateMergeInput(body)
+    3. if (!validation.ok) return NextResponse.json({ error: validation.error }, { status: 400 })
+    4. try:
+         const result = await mergeTables(ctx.tenantId, validation.data.primary_id, validation.data.children_ids)
+         return NextResponse.json({ ok: true, data: result }, { status: 200 })
+       catch (err):
+         const mapped = mapRepoErrorToHttp(err)
+         return NextResponse.json(mapped.body, { status: mapped.status })
+
+    CONSTRAINTS:
+    - Do NOT import anything — all dependencies are assumed in scope
+    - Do NOT declare any other function
+    - Use `export async function mergeHandler(req, ctx)`
+    - Do NOT add logging
+
+    OUTPUT ONLY the function. No markdown fences. No prose. Start directly with `export async function`.
+  inputs: {}
+
+acceptance_tests:
+  # T3 is integration-heavy; we only check that the generated code parses
+  # and contains the expected call structure. Full behavior is covered by
+  # post-compose integration tests.
+  - type: contains
+    rule: "export async function mergeHandler"
+  - type: contains
+    rule: "await req.json()"
+  - type: contains
+    rule: "validateMergeInput"
+  - type: contains
+    rule: "mergeTables(ctx.tenantId"
+  - type: contains
+    rule: "mapRepoErrorToHttp(err)"
+  - type: not_contains
+    rule: "import "
+  - type: not_contains
+    rule: "require("
+
+runner:
+  model: "qwen2.5-coder:14b-instruct-q4_K_M"
+  max_retries: 3
+  temperature: 0.0
+  num_ctx: 4096

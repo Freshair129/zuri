@@ -1,0 +1,22 @@
+manifest_id: FEAT-006_POS_merge_endpoint
+feature: FEAT-006
+blueprint_ref: "gks/phase3_blueprints/FEAT-006_POS.yaml#api_contracts[1]"
+target_file: "src/app/api/pos/tables/merge/route.js"
+
+tasks:
+  - T1_validate-input
+  - T2_error-mapper
+  - T3_handler-body
+  - T4_route-exports
+
+compose:
+  layout: nextjs_app_router_route
+  order: [T1_validate-input, T2_error-mapper, T3_handler-body, T4_route-exports]
+  header: |
+    // AUTO-GENERATED from phase3.5_microtasks/FEAT-006/
+    // Do not edit directly. Regenerate via: npm run msp:codegen FEAT-006
+    export const dynamic = 'force-dynamic'
+  imports:
+    - "import { NextResponse } from 'next/server'"
+    - "import { withAuth } from '@/lib/auth'"
+    - "import { mergeTables } from '@/lib/repositories/tableRepo'"
