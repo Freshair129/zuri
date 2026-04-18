@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-18T22:21:17.023Z",
+  "generated_at": "2026-04-18T22:21:31.115Z",
   "count_by_type": {
     "adr": 3,
     "architecture_decision": 22,
@@ -14,5 +14,5 @@
   "total_bytes": 246660,
   "duplicates": [],
   "version": "1.0.0",
-  "last_validation": "2026-04-18T22:21:17.509Z"
+  "last_validation": "2026-04-18T22:21:31.610Z"
 }

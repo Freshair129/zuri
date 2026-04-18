@@ -1,0 +1,10 @@
+# MSP gate: L0 index build + atomic validation
+# Fails commit if phase2_atomic/ has drift (duplicate ids, missing frontmatter, filename collisions)
+npm run msp:check || {
+  echo ""
+  echo "[x] MSP validation failed."
+  echo "    See: gks/00_index/atomic_validation_report.json"
+  echo "    Fix errors then retry. To bypass for a HOTFIX: git commit --no-verify"
+  echo ""
+  exit 1
+}
