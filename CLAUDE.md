@@ -67,6 +67,12 @@ Hotfix escape hatch: tag commit with `HOTFIX`, backfill phase1-3 artifacts withi
 - `npm run msp:check` — both (runs as pre-commit hook via husky)
 - `node scripts/msp/gen-frontmatter.mjs <file>` — Gemini-assisted frontmatter draft for a markdown file
 
+### Phase 3.5 Codegen (blueprint → code)
+- `npm run msp:codegen FEAT-NNN` — Qwen 14B local executes each task YAML → `_outputs/T*.out.js`
+- `npm run msp:compose FEAT-NNN` — deterministic composer joins task outputs → `src/.../*.js`
+- Task YAMLs live in `gks/phase3.5_microtasks/FEAT-NNN/`. Schema: `gks/phase3.5_microtasks/_SCHEMA.yaml`
+- **Never hand-edit AUTO-GENERATED files** — update task YAMLs and rerun codegen
+
 ### Pre-commit
 Installed via husky. Blocks commit if `msp:check` fails. Bypass for emergencies: `git commit --no-verify` + tag HOTFIX.
 
@@ -77,9 +83,18 @@ Installed via husky. Blocks commit if `msp:check` fails. Bypass for emergencies:
 - **Edge Runtime**: Use `await getPrisma()` lazy pattern (never top-level `getPrisma()`). See CHANGELOG v2.7.0b.
 
 ## 🧠 Multi-Agent Notes
-- **Path encoding**: This project resolves to `D--zuri`. MSP inbound at `.brain/msp/projects/D--zuri/inbound/`.
-- **Agents**: Claude (this agent, planner/architect), Gemini CLI (local, implementer/codegen), EVA (global, higher-order guidance).
-- Agents read via Obsidian MCP / Read tool; write via MSP queue only.
+
+**Path encoding**: This project resolves to `D--zuri`. MSP inbound at `.brain/msp/projects/D--zuri/inbound/`.
+
+**3-Tier Workflow:**
+
+| Tier | Agent | Responsibility |
+|---|---|---|
+| T3 | **Claude (this)** | Architecture decisions, blueprint authoring, Phase 3.5 decomposition, PR review |
+| T2 | **Gemini CLI** (local) | Template instantiation, acceptance test generation, composer, validators |
+| T1 | **Qwen 14B** (local GPU) | Micro-task codegen — 1 concern per task, ctx=4096, 43 tok/s |
+
+Agents read via Obsidian MCP / Read tool; write via MSP inbound queue only.
 
 ---
-*This file is the canonical entry point for Claude Code in Zuri. For deeper architecture, read `msp/ARCHITECTURE_OVERVIEW.md` and `gks/phase2_atomic/PROTO--gks-v3-architecture.md`.*
+*Canonical entry point for Claude Code in Zuri. Deeper architecture: `msp/ARCHITECTURE_OVERVIEW.md` · `gks/phase2_atomic/PROTO--gks-v3-architecture.md`*
