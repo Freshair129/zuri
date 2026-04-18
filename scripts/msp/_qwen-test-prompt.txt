@@ -1,0 +1,36 @@
+You are RWANG (อาหวัง), Zuri's local SLM coder. Implement the API route file from the blueprint below. Output ONLY the full file contents of `src/app/api/pos/tables/merge/route.js`, no prose, no markdown fences.
+
+### Blueprint (Phase 3 — FEAT-006_POS.yaml)
+```yaml
+endpoint: "POST /api/pos/tables/merge"
+payload: { primary_id: "uuid", children_ids: "uuid[]" }
+rule: "Transactional atomic merge"
+security: role SLS/AGT or MGR/ADM (auth required)
+```
+
+### Project patterns (MUST follow)
+1. **Next.js 14 App Router** — export `POST` function in `src/app/api/pos/tables/merge/route.js`
+2. **Multi-tenancy** — every DB query MUST be scoped by `tenantId` extracted from auth session via `withAuth` wrapper. Reject cross-tenant attempts.
+3. **Repository pattern** — all DB logic lives in `src/lib/repositories/tableRepo.js` which already exports `mergeTables(tenantId, mainTableId, secondaryTableIds)`. The route file MUST call this repo function, not use Prisma directly.
+4. **Validation** — validate that `primary_id` is a non-empty UUID string and `children_ids` is a non-empty array of UUIDs. Return `400` with `{ error }` on invalid input.
+5. **Error mapping** — if repo throws Error containing `"cross-tenant"` or `"not found"`, return `404`; if contains `"already part of a merge"` or `"not available"`, return `409`; otherwise `500`.
+6. **Success response** — return `{ ok: true, data: { mergeGroupId, mainTableId, secondaryTableIds } }` with status `200`.
+7. **Edge runtime safe** — must include `export const dynamic = 'force-dynamic'` at top. Do NOT import prisma at module top level; repo handles it lazily.
+8. **withAuth wrapper** — `import { withAuth } from '@/lib/auth'` — signature: `withAuth(async (req, { tenantId, userId, role }) => NextResponse)`.
+
+### Existing auth helper signature
+```js
+// src/lib/auth.js
+export function withAuth(handler) { /* returns (req) => Promise<NextResponse> */ }
+```
+
+### Existing repo signature
+```js
+// src/lib/repositories/tableRepo.js
+export async function mergeTables(tenantId, mainTableId, secondaryTableIds)
+// throws: Error messages include "not found", "cross-tenant", "not available", "already part of a merge"
+// returns: { mergeGroupId, mainTableId, secondaryTableIds }
+```
+
+### Required output
+The complete contents of `src/app/api/pos/tables/merge/route.js`. Begin directly with the first line of the file (e.g. `import { NextResponse } from 'next/server'`). Do not include markdown fences, comments about your process, or any explanation. Just the file.

@@ -19,7 +19,13 @@
     "check:edge": "node scripts/check-edge-safe.js",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "msp:index": "node scripts/msp/build-l0-index.mjs",
+    "msp:validate": "node scripts/msp/validate-atomic-ids.mjs",
+    "msp:check": "npm run msp:index && npm run msp:validate",
+    "msp:codegen": "node scripts/msp/runner-microtask.mjs",
+    "msp:compose": "node scripts/msp/composer-route.mjs",
+    "prepare": "husky"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -55,6 +61,7 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.21",
+    "husky": "^9.1.7",
     "postcss": "^8.4.49",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.17",

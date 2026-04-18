@@ -1,0 +1,16 @@
+TASK: Write one JavaScript function `mapRepoErrorToHttp(err)`.
+
+INPUT: Error object with a `.message` string.
+OUTPUT: object `{ status: number, body: { error: string } }`.
+
+RULES (exact, do not deviate):
+- message contains "cross-tenant" OR "not found" → status 404, body.error = "Resource not found"
+- message contains "already part of a merge" OR "not available" → status 409, body.error = "Conflict: " + err.message
+- anything else → status 500, body.error = "Internal Server Error"
+
+CONSTRAINTS:
+- Pure function, no imports, no I/O, no logging
+- Use `export function` (ESM)
+- Match rules top-to-bottom in order given
+
+OUTPUT ONLY the function. No markdown fences. No prose. No examples. Start directly with `export function`.
