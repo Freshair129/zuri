@@ -1,3 +1,19 @@
+---
+id: "ADR-076"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "กำหนดกลยุทธ์การจัดการ Branch สำหรับ Multi-Agent โดยใช้หลักการ 1 Linear Issue ต่อ 1 Branch เพื่อลดความขัดแย้งในการจัดการ Git และทำให้ประวัติการทำงานชัดเจน"
+tags: [git-flow, multi-agent, branch-strategy, linear-integration, development-process]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # Created At: 2026-04-12 23:45:00 +07:00 (v1.0.0)
 # Previous version: —
 # Last Updated: 2026-04-12 23:45:00 +07:00 (v1.0.0)

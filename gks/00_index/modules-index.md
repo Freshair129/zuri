@@ -1,24 +1,53 @@
 ---
 id: "modules-index"
 type: "moc"
-summary: "Central directory of all system modules"
+summary: "Central directory of all system modules — synced from atomic_index.jsonl SSOT"
 status: "active"
+version: "2.0.0"
+updated_at: 2026-04-19
+updated_by: "@claude-opus-4-7"
 ---
 # 📦 System Modules Index
 
+Live count: **9 modules** in `gks/phase2_atomic/` (canonical id: `MOD--*`).
+
+---
+
 ## 🏗️ Core & Infrastructure
-- [[01_modules/MOD--core|Core Foundation]] (Multi-tenancy, Auth, DB)
-- [[01_modules/MOD--ai|AI Engine]] (Gemini, Automation Architecture)
-- [[01_modules/MOD--analytics|Analytics]] (Dashboards, Reporting)
+- [[MOD--core]] — Shared DB, Multi-Tenant Isolation, Global Config
+- [[MOD--ai]] — AI Engine: NL2SQL, Gemini, Automation Architecture
+- [[MOD--analytics]] — Business Intelligence, Dashboards, Reporting
 
 ## 💰 Commerce & Billing
-- [[01_modules/MOD--billing|Billing & Invoicing]] (Payment, Slips, Tax)
-- [[01_modules/MOD--pos|POS Hub]] (Onsite Sales, Floor Plan)
+- [[MOD--billing]] — Invoicing, Payment, Slip Verification, Tax
+- [[MOD--pos]] — Point of Sale, Floor Plan, Table Management
 
 ## 🤝 CRM & Communication
-- [[01_modules/MOD--crm|CRM Core]] (Customer 360, Identity Resolution)
-- [[01_modules/MOD--inbox|Unified Inbox]] (Omni-channel Messaging)
+- [[MOD--crm]] — Customer 360, Identity Resolution
+- [[MOD--inbox]] — Omni-channel Messaging & Pipeline
 
 ## 🍳 Logistics & Education
-- [[01_modules/MOD--enrollment|Enrollment]] (Course & Student Lifecycle)
-- [[01_modules/MOD--kitchen|Kitchen & Inventory]] (FEFO, Recipes, Stock)
+- [[MOD--enrollment]] — Course & Student Lifecycle
+- [[MOD--kitchen]] — Recipes, FEFO Inventory, Stock
+
+---
+
+## Module Boundaries (Upstream ← / → Downstream)
+
+| Module | Upstream (depends on) | Downstream (consumers) |
+|---|---|---|
+| [[MOD--core]] | — | all |
+| [[MOD--crm]] | core, inbox | billing |
+| [[MOD--billing]] | crm, pos | analytics, accounting |
+| [[MOD--inbox]] | core | crm |
+| [[MOD--pos]] | crm, billing | kitchen, analytics |
+| [[MOD--ai]] | core | all (read-only) |
+| [[MOD--analytics]] | core | dashboards |
+| [[MOD--enrollment]] | crm | billing |
+| [[MOD--kitchen]] | pos | analytics |
+
+*Individual module files declare precise boundaries in their `## 2. Boundaries` section.*
+
+---
+
+*Auto-sync: live count regenerated via `npm run msp:index`. Edit this MOC by hand to adjust groupings.*

@@ -1,3 +1,14 @@
+---
+id: "ADR-061"
+type: "architecture_decision"
+status: "active"
+epistemic:
+  confidence: 1.0
+  source_type: "direct_experience"
+context_anchor:
+  duration: "universal"
+summary: "การแยก Prisma Schema ตามโมดูล (Split Prisma Schema)"
+---
 # ADR-061: Split Prisma Schema with prisma-merge
 
 **Status:** APPROVED

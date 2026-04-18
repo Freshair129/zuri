@@ -1,3 +1,19 @@
+---
+id: "ADR-064"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Mandates a three-phase workflow requiring approved specifications and architecture decisions before implementation to ensure consistency and prevent AI-driven development errors."
+tags: [doc-to-code, workflow-standard, spec-approval, architecture-decision]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-064: DOC TO CODE Workflow — Mandatory Documentation Before Implementation
 
 **Status:** APPROVED

@@ -1,3 +1,19 @@
+---
+id: "ADR-067"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Defines a sliding window changelog system using semver-like versioning and an orchestrator command to maintain a concise, AI-friendly history while archiving older entries."
+tags: [changelog, architecture-decision, dev-workflow, documentation]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-067: Changelog System v2 — Sliding Window with Orchestrator
 
 **Status:** APPROVED

@@ -1,3 +1,14 @@
+---
+id: "laws"
+type: "knowledge"
+status: "active"
+version: "1.0.0"
+summary: "High-level index and navigator for the non-negotiable architectural constraints and logic nodes of the Zuri Platform."
+tags: [architecture, multi-tenancy, rbac, system-design, constraints]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Zuri Platform — Architectural Laws (Navigator)
 
 This document is the high-level index for the non-negotiable architectural constraints of the Zuri Platform.

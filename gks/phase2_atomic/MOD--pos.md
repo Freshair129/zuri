@@ -1,5 +1,5 @@
 ---
-id: module--pos
+id: MOD--pos
 type: module
 module: pos
 status: partial

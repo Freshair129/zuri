@@ -1,3 +1,14 @@
+---
+id: "WEBHOOK_EVENT_CATALOG"
+type: "knowledge"
+status: "active"
+version: "1.0.0"
+summary: "Comprehensive catalog of Zuri Platform's inbound webhooks, Pusher realtime events, internal domain events, and background jobs for system-wide event management and integration."
+tags: [webhook, pusher-events, domain-events, event-catalog, realtime]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Zuri Platform — Webhook & Event Catalog
 
 **Version:** 1.0

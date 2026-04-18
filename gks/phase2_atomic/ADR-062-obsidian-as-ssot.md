@@ -1,3 +1,19 @@
+---
+id: "ADR-062"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Establishes the root-level docs directory as a unified Obsidian vault to centralize fragmented project documentation and provide structured access for AI agents via MCP."
+tags: [obsidian, documentation, architecture-decision, mcp, knowledge-management]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-062: Obsidian as Single Source of Truth for Documentation
 
 **Status:** APPROVED

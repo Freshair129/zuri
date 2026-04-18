@@ -1,3 +1,19 @@
+---
+id: "ADR-065"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Defines the industry plugin system to decouple core modules from industry-specific logic using tenant-configured manifests and dynamic runtime loading."
+tags: [industry-plugins, module-architecture, tenant-configuration, system-decoupling]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-065: Industry Plugin System — Tenant-Configured Module Loading
 
 **Status:** APPROVED

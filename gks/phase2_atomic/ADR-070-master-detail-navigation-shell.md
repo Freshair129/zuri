@@ -1,3 +1,19 @@
+---
+id: "ADR-070"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Transition to a Master-Detail Navigation Shell using the Topbar for module switching and the Sidebar for contextual sub-features to reduce cognitive load and improve scalability."
+tags: [navigation, architecture, layout, scalability, ui-ux]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-070: Master-Detail Navigation Shell
 
 ## Status

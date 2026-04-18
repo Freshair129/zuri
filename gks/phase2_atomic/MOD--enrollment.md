@@ -1,5 +1,5 @@
 ---
-id: module--enrollment
+id: MOD--enrollment
 type: module
 module: enrollment
 status: active

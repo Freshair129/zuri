@@ -1,3 +1,19 @@
+---
+id: "ADR-074"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "กำหนดให้แต่ละ Tenant มี codename เฉพาะเพื่อใช้เป็น namespace prefix สำหรับ Business ID แทนการใช้ 'TVS-' แบบ hardcode เพื่อรองรับระบบ multi-tenancy และ brand isolation"
+tags: [multi-tenancy, id-generation, database-schema, architecture-decision]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # Created At: 2026-04-12 18:00:00 +07:00 (v1.0.0)
 # Previous version: 2026-04-12 18:00:00 +07:00 (v1.0.0)
 # Last Updated: 2026-04-12 08:20:00 +07:00 (v1.1.0)

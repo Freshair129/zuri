@@ -1,5 +1,5 @@
 ---
-id: module--analytics
+id: MOD--analytics
 type: module
 module: analytics
 status: stable

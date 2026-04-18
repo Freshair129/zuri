@@ -1,3 +1,19 @@
+---
+id: "ADR-068"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "ปรับลดบทบาทผู้ใช้งานจากเดิม 12 แผนกเหลือ 6 บทบาทตามตัวตนจริง (Persona) เพื่อให้สอดคล้องกับการทำงานของโรงเรียนสอนทำอาหารขนาด SME และลดความซับซ้อนในการตั้งค่า"
+tags: [rbac, role-consolidation, user-management, permission-matrix]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-068 — Persona-Based RBAC (6 Roles)
 
 **Status:** APPROVED

@@ -1,5 +1,5 @@
 ---
-id: module--billing
+id: MOD--billing
 type: module
 module: billing
 status: partial

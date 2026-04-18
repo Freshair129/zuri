@@ -1,3 +1,14 @@
+---
+id: "data-flow"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "This protocol defines data flow integrity where UI reads from the database and background workers or webhooks handle external API synchronization to ensure system consistency."
+tags: [data-flow, architecture, integrity, backend, synchronization]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Architectural Law: Data Flow & Integrity
 
 ```mermaid

@@ -1,3 +1,19 @@
+---
+id: "ADR-077"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "ADR-077 details the secure architecture for employee invitations via tokens and ownership transfer with OTP protection and atomic database transactions."
+tags: [invitation-system, ownership-transfer, otp-guard, database-schema, security]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # Created At: 2026-04-12 00:00:00 +07:00 (v1.0.0)
 # Previous version: N/A
 # Last Updated: 2026-04-12 00:00:00 +07:00 (v1.0.0)

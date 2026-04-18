@@ -1,3 +1,14 @@
+---
+id: "repo-pattern"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "Protocol mandating the Repository Pattern for all database operations to ensure strict tenant isolation and centralized data access management using Prisma."
+tags: [repository-pattern, multi-tenancy, data-access, prisma]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Architectural Law: Repository Pattern
 
 - **SSOT**: ALL database operations must go through `src/lib/repositories/`.

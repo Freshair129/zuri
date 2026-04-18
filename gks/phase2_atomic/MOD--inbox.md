@@ -1,5 +1,5 @@
 ---
-id: module--inbox
+id: MOD--inbox
 type: module
 module: inbox
 status: partial

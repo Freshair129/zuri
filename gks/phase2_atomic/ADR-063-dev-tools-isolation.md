@@ -1,3 +1,19 @@
+---
+id: "ADR-063"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Establishes a .dev/ directory at the repository root to isolate development tooling from production code, improving security and reducing bundle size."
+tags: [architecture, dev-tools, repository-structure, security, isolation]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-063: Dev Tools Isolation — .dev/ Directory
 
 **Status:** APPROVED

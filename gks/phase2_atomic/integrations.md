@@ -1,3 +1,14 @@
+---
+id: "integrations"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "Protocol for external service integrations covering messaging, infrastructure, AI, and strict synchronization rules for database-driven UI and webhook performance."
+tags: [integrations, webhooks, sync-rules, tech-stack]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Technology Stack: External Integrations
 
 | Integration | Token/Config | Webhook |

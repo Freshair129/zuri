@@ -1,3 +1,14 @@
+---
+id: "multi-tenancy"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "Protocol for multi-tenant isolation using tenant_id columns, middleware resolution via headers, and Repository Pattern enforcement."
+tags: [multi-tenancy, architecture, database, security, middleware]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Architectural Law: Multi-Tenancy
 
 ```mermaid

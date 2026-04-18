@@ -1,3 +1,19 @@
+---
+id: "ADR-071"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Establishes a Single Source of Truth for AI rules and introduces an Auditor System to ensure consistency between documentation and code through automated sync validation."
+tags: [ai-rules, doc-to-code, sync-validation, architecture-governance]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-071: AI Master Rulebook & Doc-Code Sync
 
 **Status:** ACCEPTED

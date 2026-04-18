@@ -1,3 +1,14 @@
+---
+id: "TECH_STACK"
+type: "knowledge"
+status: "active"
+version: "1.0.0"
+summary: "Comprehensive overview and single source of truth for the Zuri Platform technology stack, covering core layers, integrations, and system endpoints."
+tags: [tech-stack, architecture, stack-navigator, infrastructure]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Zuri Platform — Technology Stack (Navigator)
 
 This document is the SSOT for the project's technology stack layers.

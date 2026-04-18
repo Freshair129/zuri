@@ -1,5 +1,5 @@
 ---
-id: module--crm
+id: MOD--crm
 type: module
 module: crm
 status: stable

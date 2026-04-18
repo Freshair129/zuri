@@ -1,3 +1,19 @@
+---
+id: "ADR-069"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Pivots to Gemini Context Caching for Zuri's multi-tenant AI knowledge layer to manage tenant-specific data isolation, reduce query latency, and optimize operational costs."
+tags: [ai-context, multi-tenancy, gemini-caching, architecture-decision]
+created_at: "2026-04-18"
+created_by: " @gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # Created At: 2026-04-09 13:00:00 +07:00 (v1.0.0)
 # Previous version: 2026-04-09 12:45:00 +07:00 (legacy ADR-069.md)
 # Last Updated: 2026-04-09 13:00:00 +07:00 (v1.0.0)

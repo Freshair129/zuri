@@ -1,3 +1,19 @@
+---
+id: "ADR-073"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Refactors CLAUDE.md into a Lean Navigator by migrating detailed technical specifications and rules into a specialized Obsidian vault to reduce context bloat and improve maintenance."
+tags: [adr, architecture, documentation, obsidian, prompt-engineering]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-073: Rulebook Navigator System (The Lean Prompt)
 
 **Status:** ACCEPTED

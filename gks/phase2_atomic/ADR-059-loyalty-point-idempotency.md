@@ -1,3 +1,14 @@
+---
+id: "ADR-059"
+type: "architecture_decision"
+status: "active"
+epistemic:
+  confidence: 1.0
+  source_type: "direct_experience"
+context_anchor:
+  duration: "universal"
+summary: "การรับประกันความถูกต้องของการสะสมแต้ม (Loyalty Point Idempotency)"
+---
 # ADR-059: Loyalty Point Consistency & Idempotency
 
 **Date:** 2026-03-30

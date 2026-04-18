@@ -1,3 +1,19 @@
+---
+id: "ADR-078"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Establishes guardrails for squash merges and cherry-picks to prevent accidental schema deployments and outages by mandating specific git commands and Prisma verification steps."
+tags: [git-workflow, squash-merge, prisma-schema, deployment-safety]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # Created At: 2026-04-13 00:40:00 +07:00 (v1.0.0)
 # Previous version: —
 # Last Updated: 2026-04-13 00:40:00 +07:00 (v1.0.0)

@@ -1,5 +1,5 @@
 ---
-id: module--core
+id: MOD--core
 type: module
 module: core
 status: stable

@@ -1,3 +1,19 @@
+---
+id: "ADR-066"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Establishes a 500 LOC hard limit for React components to improve maintainability, testing, and AI context efficiency in the ZURI-v1 codebase."
+tags: [react-standards, code-quality, architecture-decision, component-design]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # ADR-066: Component Size Limit — Max 500 LOC per Component
 
 **Status:** APPROVED

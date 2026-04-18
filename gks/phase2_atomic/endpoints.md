@@ -1,3 +1,14 @@
+---
+id: "endpoints"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "Authoritative registry of Zuri API endpoints including cross-cutting rules for authentication, multi-tenancy, and module-specific handlers for AI, CRM, and Inbox services."
+tags: [api-registry, system-endpoints, zuri-api, protocol-spec]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Zuri — API Endpoint Registry
 
 > **Last Updated:** 2026-04-15  

@@ -1,4 +1,20 @@
-# ADR-071 — Internationalization (i18n) & Theme System
+---
+id: "ADR-072"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "สถาปัตยกรรมระบบจัดการภาษา (i18n) และธีม (Dark/Light) โดยใช้ React Context และ Amber Citrus Design System เพื่อรองรับผู้ใช้งานทั้งในไทยและต่างประเทศ"
+tags: [i18n, theme-system, react-context, tailwind-css, amber-citrus]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
+# ADR-072 — Internationalization (i18n) & Theme System
 
 **Status:** APPROVED (documenting existing implementation)
 **Date:** 2026-04-09

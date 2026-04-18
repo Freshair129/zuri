@@ -1,5 +1,5 @@
 ---
-id: module--kitchen
+id: MOD--kitchen
 type: module
 module: kitchen
 status: partial

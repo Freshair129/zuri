@@ -1,3 +1,14 @@
+---
+id: "core"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "Outlines the core technology stack for the Zuri project, including Next.js 14, PostgreSQL via Supabase, Upstash Redis, QStash, Pusher Channels, and NextAuth.js."
+tags: [tech-stack, nextjs, supabase, serverless, architecture]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Technology Stack: Core
 
 - **Framework**: Next.js 14 (App Router) — deployed on Vercel (serverless)

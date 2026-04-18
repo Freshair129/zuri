@@ -1,3 +1,19 @@
+---
+id: "ADR-075"
+type: "architecture_decision"
+status: "active"
+version: "1.0.0"
+summary: "Align Product model fields with ERP standards by renaming productId to sku and sku to barcode to ensure consistency with universal business key and barcode patterns."
+tags: [erp-naming, naming-convention, database-schema, product-model]
+created_at: "2026-04-18"
+created_by: " @gemini-draft"
+epistemic:
+  confidence: 1.0
+  source_type: "documented_source"
+context_anchor:
+  duration: "universal"
+---
+
 # Created At: 2026-04-12 19:00:00 +07:00 (v1.0.0)
 # Previous version: N/A
 # Last Updated: 2026-04-12 19:00:00 +07:00 (v1.0.0)

@@ -1,5 +1,5 @@
 ---
-id: module--ai
+id: MOD--ai
 type: module
 module: ai
 status: active

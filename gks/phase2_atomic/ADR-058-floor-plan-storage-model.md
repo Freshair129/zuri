@@ -1,3 +1,14 @@
+---
+id: "ADR-058"
+type: "architecture_decision"
+status: "active"
+epistemic:
+  confidence: 1.0
+  source_type: "direct_experience"
+context_anchor:
+  duration: "universal"
+summary: "รูปแบบการเก็บข้อมูลผังโต๊ะ (Floor Plan Storage Model)"
+---
 # ADR-058: Floor Plan Storage Model
 
 **Date:** 2026-03-30

@@ -1,3 +1,14 @@
+---
+id: "rbac-security"
+type: "protocol"
+status: "active"
+version: "1.0.0"
+summary: "Architectural protocol defining Role-Based Access Control and security enforcement using NextAuth, centralized permission matrices, and employee role management."
+tags: [rbac, security, authorization, next-auth]
+created_at: "2026-04-18"
+created_by: "@gemini-draft"
+---
+
 # Architectural Law: RBAC & Security
 
 ```mermaid
