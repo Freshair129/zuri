@@ -89,7 +89,8 @@ export const POST = withAuth(
       }
 
       if (action === 'update') {
-        const { id, action: _action, ...updateData } = body
+        const { id, ...updateData } = body
+        delete updateData.action
         if (!id) {
           return NextResponse.json({ error: 'id is required' }, { status: 400 })
         }
