@@ -43,7 +43,7 @@ function validateMergeInput(body) {
 }
 
 function mapRepoErrorToHttp(err) {
-  const message = err instanceof Error ? err.message : String(err ?? '')
+  const message = err && typeof err.message === 'string' ? err.message : String(err ?? '')
 
   if (message.includes('cross-tenant') || message.includes('not found')) {
     return { status: 404, body: { error: 'Resource not found' } }
