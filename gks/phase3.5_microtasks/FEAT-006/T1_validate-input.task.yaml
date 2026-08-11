@@ -17,12 +17,15 @@ prompt:
     OUTPUT: object { ok: boolean, error?: string, data?: { primary_id: string, children_ids: string[] } }
 
     RULES (check in order, stop at first failure):
-    1. body must be a non-null object -> else return { ok: false, error: "Body must be a JSON object" }
+    1. body must be a non-null object and must not be an array -> else return { ok: false, error: "Body must be a JSON object" }
     2. body.primary_id must be a non-empty string -> else return { ok: false, error: "primary_id required" }
     3. body.children_ids must be an array -> else return { ok: false, error: "children_ids must be an array" }
     4. body.children_ids must have length >= 1 -> else return { ok: false, error: "children_ids cannot be empty" }
     5. every element of body.children_ids must be a non-empty string -> else return { ok: false, error: "children_ids must all be non-empty strings" }
-    6. otherwise return { ok: true, data: { primary_id: body.primary_id, children_ids: body.children_ids } }
+    6. trim primary_id and every child id before further checks
+    7. primary_id must not appear in children_ids -> else return { ok: false, error: "primary_id cannot also appear in children_ids" }
+    8. children_ids must not contain duplicates -> else return { ok: false, error: "children_ids must not contain duplicates" }
+    9. otherwise return { ok: true, data: { primary_id: trimmedPrimaryId, children_ids: trimmedChildrenIds } }
 
     CONSTRAINTS:
     - Pure function, no imports, no I/O, no logging, no regex
@@ -36,6 +39,8 @@ prompt:
 acceptance_tests:
   - input: 'null'
     expect: '{ "ok": false, "error": "Body must be a JSON object" }'
+  - input: '[]'
+    expect: '{ "ok": false, "error": "Body must be a JSON object" }'
   - input: '{ "primary_id": "t1", "children_ids": ["t2","t3"] }'
     expect: '{ "ok": true, "data": { "primary_id": "t1", "children_ids": ["t2","t3"] } }'
   - input: '{ "primary_id": "", "children_ids": ["t2"] }'
@@ -46,6 +51,10 @@ acceptance_tests:
     expect: '{ "ok": false, "error": "children_ids cannot be empty" }'
   - input: '{ "primary_id": "t1", "children_ids": ["t2",""] }'
     expect: '{ "ok": false, "error": "children_ids must all be non-empty strings" }'
+  - input: '{ "primary_id": "t1", "children_ids": ["t1"] }'
+    expect: '{ "ok": false, "error": "primary_id cannot also appear in children_ids" }'
+  - input: '{ "primary_id": "t1", "children_ids": ["t2","t2"] }'
+    expect: '{ "ok": false, "error": "children_ids must not contain duplicates" }'
 
 runner:
   model: "qwen2.5-coder:14b-instruct-q4_K_M"
