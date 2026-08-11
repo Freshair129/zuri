@@ -16,7 +16,7 @@ prompt:
 
     INPUTS:
     - req: object with async method `req.json()` returning parsed body
-    - ctx: object { tenantId: string, userId: string, role: string }
+    - ctx: object containing `session.user.tenantId`
 
     AVAILABLE (already in scope — do not re-import):
     - NextResponse (from 'next/server')
@@ -25,11 +25,12 @@ prompt:
     - mapRepoErrorToHttp(err) — from helpers, returns { status, body }
 
     LOGIC (exact):
-    1. const body = await req.json()
+    1. Parse JSON in its own try/catch. If parsing throws, return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
     2. const validation = validateMergeInput(body)
     3. if (!validation.ok) return NextResponse.json({ error: validation.error }, { status: 400 })
-    4. try:
-         const result = await mergeTables(ctx.tenantId, validation.data.primary_id, validation.data.children_ids)
+    4. const tenantId = ctx.session.user.tenantId
+    5. try:
+         const result = await mergeTables(tenantId, validation.data.primary_id, validation.data.children_ids)
          return NextResponse.json({ ok: true, data: result }, { status: 200 })
        catch (err):
          const mapped = mapRepoErrorToHttp(err)
@@ -39,25 +40,27 @@ prompt:
     - Do NOT import anything — all dependencies are assumed in scope
     - Do NOT declare any other function
     - Use `export async function mergeHandler(req, ctx)`
+    - Do NOT use ctx.tenantId
     - Do NOT add logging
 
     OUTPUT ONLY the function. No markdown fences. No prose. Start directly with `export async function`.
   inputs: {}
 
 acceptance_tests:
-  # T3 is integration-heavy; we only check that the generated code parses
-  # and contains the expected call structure. Full behavior is covered by
-  # post-compose integration tests.
   - type: contains
     rule: "export async function mergeHandler"
   - type: contains
     rule: "await req.json()"
   - type: contains
-    rule: "validateMergeInput"
+    rule: "Invalid JSON body"
   - type: contains
-    rule: "mergeTables(ctx.tenantId"
+    rule: "ctx.session.user.tenantId"
+  - type: contains
+    rule: "mergeTables(tenantId"
   - type: contains
     rule: "mapRepoErrorToHttp(err)"
+  - type: not_contains
+    rule: "ctx.tenantId"
   - type: not_contains
     rule: "import "
   - type: not_contains
