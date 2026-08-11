@@ -13,11 +13,11 @@ prompt:
   template: |
     TASK: Write exactly one JavaScript function `mapRepoErrorToHttp(err)`.
 
-    INPUT: Any thrown value. It may be an Error, a string, null, or another value.
+    INPUT: Any thrown value. It may be an Error, an object with a `.message` string, a string, null, or another value.
     OUTPUT: object { status: number, body: { error: string } }
 
     FIRST derive a safe message string:
-    - if `err instanceof Error`, use `err.message`
+    - if `err` is truthy and `typeof err.message === 'string'`, use `err.message`
     - otherwise use `String(err ?? '')`
 
     RULES (check in order, stop at first match):
@@ -31,7 +31,7 @@ prompt:
     CONSTRAINTS:
     - Pure function, no imports, no I/O, no logging
     - Use `export function`
-    - Do not access `err.message` without first normalizing the thrown value
+    - Do not access `err.message` unless `err` is truthy and the property is a string
     - No template literals unless necessary
 
     OUTPUT ONLY the function. No markdown fences. No prose. Start directly with `export function`.
@@ -48,6 +48,8 @@ acceptance_tests:
     expect: '{ "status": 409, "body": { "error": "Conflict: T5 not available" } }'
   - input: '{ "message": "DB connection lost" }'
     expect: '{ "status": 500, "body": { "error": "Internal Server Error" } }'
+  - type: contains
+    rule: "typeof err.message === 'string'"
   - type: contains
     rule: "String(err ?? '')"
 
