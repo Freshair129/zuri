@@ -15,7 +15,7 @@ prompt:
     TASK: Write exactly one line of JavaScript that exports a named constant `POST`.
 
     It must be:
-    export const POST = withAuth(mergeHandler)
+    export const POST = withAuth(mergeHandler, { domain: 'orders', action: 'F' })
 
     AVAILABLE (already in scope — do not re-import):
     - withAuth — from '@/lib/auth'
@@ -32,7 +32,7 @@ prompt:
 
 acceptance_tests:
   - type: contains
-    rule: "export const POST = withAuth(mergeHandler)"
+    rule: "export const POST = withAuth(mergeHandler, { domain: 'orders', action: 'F' })"
   - type: not_contains
     rule: "export default"
 

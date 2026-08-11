@@ -40,9 +40,9 @@ export async function listTables(tenantId, { floor, zoneId, includeExtra = false
         zone: { select: { id: true, name: true, color: true } },
         orders: {
           where: { status: { in: ['PENDING', 'PAID'] } },
-          select: { 
-            id: true, 
-            orderId: true, 
+          select: {
+            id: true,
+            orderId: true,
             totalAmount: true,
             guestCount: true,
             extraSeats: true,
@@ -74,7 +74,7 @@ export async function createTable(tenantId, data) {
 export async function listTablesWithOrders(tenantId, { floor, zoneId } = {}) {
   const prisma = await getPrisma()
   const where = { tenantId, isExtra: false }
-  if (floor)  where.floor  = parseInt(floor)
+  if (floor) where.floor = parseInt(floor)
   if (zoneId) where.zoneId = zoneId
 
   const tables = await prisma.posTable.findMany({
@@ -120,16 +120,25 @@ export async function updateTable(tenantId, id, data) {
  *
  * Safety (ref: FEAT--pos-onsite, ALGO--table-merge, ADR-056):
  *  - All table IDs must belong to the same tenantId (isolation enforced)
+ *  - Rejects duplicate table IDs before entering the transaction
  *  - Rejects if any table is already part of another merge group
  *  - Rejects if any table is not in AVAILABLE status
  *  - Sets mergeGroupId on the active order of the main table
- *  - Entire operation is atomic via Prisma $transaction
+ *  - Database writes are atomic via Prisma $transaction
+ *  - Cache invalidation and realtime notification run only after commit
  */
 export async function mergeTables(tenantId, mainTableId, secondaryTableIds) {
-  const prisma = await getPrisma()
-  const allTableIds = [mainTableId, ...secondaryTableIds]
+  if (!tenantId) {
+    throw new Error('[mergeTables] Missing tenantId')
+  }
 
-  return prisma.$transaction(async (tx) => {
+  const allTableIds = [mainTableId, ...secondaryTableIds]
+  if (new Set(allTableIds).size !== allTableIds.length) {
+    throw new Error('[mergeTables] Duplicate table ids are not allowed')
+  }
+
+  const prisma = await getPrisma()
+  const result = await prisma.$transaction(async (tx) => {
     // ── Validate all tables belong to tenant and are AVAILABLE ───────────────
     const tables = await tx.posTable.findMany({
       where: { id: { in: allTableIds }, tenantId },
@@ -172,17 +181,15 @@ export async function mergeTables(tenantId, mainTableId, secondaryTableIds) {
       data: { isMerged: true, mergeGroupId },
     })
 
-    await bustCache(tenantId)
-
-    // Notify all clients of floor plan change
-    triggerEvent(`private-tenant-${tenantId}`, 'pos.table.merged', {
-      mergeGroupId,
-      mainTableId,
-      secondaryTableIds,
-    }).catch((err) => console.error('[tableRepo] Pusher pos.table.merged failed', err))
-
     return { mergeGroupId, mainTableId, secondaryTableIds }
   })
+
+  // External side effects must observe committed state only.
+  await bustCache(tenantId)
+  triggerEvent(`private-tenant-${tenantId}`, 'pos.table.merged', result)
+    .catch((err) => console.error('[tableRepo] Pusher pos.table.merged failed', err))
+
+  return result
 }
 
 /**
@@ -192,9 +199,12 @@ export async function mergeTables(tenantId, mainTableId, secondaryTableIds) {
  * Clears mergeGroupId on both tables and their orders.
  */
 export async function unmergeTables(tenantId, mergeGroupId) {
-  const prisma = await getPrisma()
+  if (!tenantId) {
+    throw new Error('[unmergeTables] Missing tenantId')
+  }
 
-  return prisma.$transaction(async (tx) => {
+  const prisma = await getPrisma()
+  const result = await prisma.$transaction(async (tx) => {
     // Resolve tableIds from the mergeGroupId for safety — don't trust caller input blindly
     const tables = await tx.posTable.findMany({
       where: { mergeGroupId, tenantId },
@@ -219,15 +229,17 @@ export async function unmergeTables(tenantId, mergeGroupId) {
       data: { isMerged: false, mergeGroupId: null },
     })
 
-    await bustCache(tenantId)
-
-    triggerEvent(`private-tenant-${tenantId}`, 'pos.table.unmerged', {
-      mergeGroupId,
-      tableIds,
-    }).catch((err) => console.error('[tableRepo] Pusher pos.table.unmerged failed', err))
-
     return { success: true, tableIds }
   })
+
+  // External side effects must observe committed state only.
+  await bustCache(tenantId)
+  triggerEvent(`private-tenant-${tenantId}`, 'pos.table.unmerged', {
+    mergeGroupId,
+    tableIds: result.tableIds,
+  }).catch((err) => console.error('[tableRepo] Pusher pos.table.unmerged failed', err))
+
+  return result
 }
 
 export async function createExtraTable(tenantId, parentTableId, data) {

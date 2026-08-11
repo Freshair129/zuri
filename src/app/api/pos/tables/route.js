@@ -15,12 +15,12 @@ export const GET = withAuth(
       const tenantId = session.user.tenantId
       const { searchParams } = new URL(request.url)
 
-      const floor  = searchParams.get('floor')  || undefined
+      const floor = searchParams.get('floor') || undefined
       const zoneId = searchParams.get('zoneId') || undefined
       const includeExtra = searchParams.get('includeExtra') === 'true'
       const monitor = searchParams.get('monitor') === 'true'
 
-      const result = monitor 
+      const result = monitor
         ? await tableRepo.listTablesWithOrders(tenantId, { floor, zoneId })
         : await tableRepo.listTables(tenantId, { floor, zoneId, includeExtra })
       return NextResponse.json({ data: result })
@@ -29,20 +29,35 @@ export const GET = withAuth(
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
   },
-  { domain: 'pos', action: 'R' }
+  { domain: 'orders', action: 'R' }
 )
 
 // POST /api/pos/tables — create table or perform table operations
 export const POST = withAuth(
   async (request, { session }) => {
-    try {
-      const tenantId = session.user.tenantId
-      const body = await request.json()
+    const tenantId = session.user.tenantId
 
-      const { 
-        action, 
-        name, capacity, shape, floor, zoneId, positionX, positionY, 
-        mainTableId, secondaryTableIds, parentTableId 
+    let body
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+
+    try {
+      const {
+        action,
+        name,
+        capacity,
+        shape,
+        floor,
+        zoneId,
+        positionX,
+        positionY,
+        mainTableId,
+        secondaryTableIds,
+        mergeGroupId,
+        parentTableId,
       } = body
 
       // Default action: create new table
@@ -66,33 +81,47 @@ export const POST = withAuth(
 
       // Update/Delete actions for management
       if (action === 'delete') {
+        if (!body.id) {
+          return NextResponse.json({ error: 'id is required' }, { status: 400 })
+        }
         const result = await tableRepo.deleteTable(tenantId, body.id)
         return NextResponse.json({ data: result })
       }
 
-      const { id, ...updateData } = body
-      if (id && (!action || action === 'update')) {
+      if (action === 'update') {
+        const { id, ...updateData } = body
+        delete updateData.action
+        if (!id) {
+          return NextResponse.json({ error: 'id is required' }, { status: 400 })
+        }
         const result = await tableRepo.updateTable(tenantId, id, updateData)
         return NextResponse.json({ data: result })
       }
 
       // Merge tables (รวมโต๊ะ)
       if (action === 'merge') {
-        if (!mainTableId || !secondaryTableIds || secondaryTableIds.length === 0) {
-          return NextResponse.json({ error: 'mainTableId and secondaryTableIds are required' }, { status: 400 })
+        if (
+          typeof mainTableId !== 'string' ||
+          !Array.isArray(secondaryTableIds) ||
+          secondaryTableIds.length === 0
+        ) {
+          return NextResponse.json(
+            { error: 'mainTableId and secondaryTableIds are required' },
+            { status: 400 }
+          )
         }
 
         const result = await tableRepo.mergeTables(tenantId, mainTableId, secondaryTableIds)
         return NextResponse.json({ data: result }, { status: 200 })
       }
 
-      // Unmerge tables
+      // Unmerge tables by merge group id
       if (action === 'unmerge') {
-        if (!secondaryTableIds || secondaryTableIds.length === 0) {
-          return NextResponse.json({ error: 'tableIds are required' }, { status: 400 })
+        if (typeof mergeGroupId !== 'string' || mergeGroupId.trim() === '') {
+          return NextResponse.json({ error: 'mergeGroupId is required' }, { status: 400 })
         }
 
-        const result = await tableRepo.unmergeTables(tenantId, secondaryTableIds)
+        const result = await tableRepo.unmergeTables(tenantId, mergeGroupId.trim())
         return NextResponse.json({ data: result }, { status: 200 })
       }
 
@@ -121,5 +150,5 @@ export const POST = withAuth(
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
   },
-  { domain: 'pos', action: 'W' }
+  { domain: 'orders', action: 'F' }
 )
